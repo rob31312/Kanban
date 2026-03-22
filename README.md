@@ -1,7 +1,7 @@
-# Sprint Room
+# Kanban Board
 
-Sprint Room is a starter Discord Activity project for a small Agile team.
-Version 1 includes a lightweight Kanban board and a Standup view.
+Kanban board is a starter Discord Activity project for a small Agile team.
+Version 1 includes a lightweight Kanban board.
 
 ## Features in this starter
 - Four Kanban columns: To Do, In Progress, Testing, Done

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { initializeDiscord } from './discord';
 import { initialTasks, owners } from './data';
 
-const STATUSES = ['To Do', 'In Progress', 'Testing', 'Done'];
+const STATUSES = ['Backlog', 'In Progress', 'Testing', 'Approved'];
 
 function App() {
   const [tasks, setTasks] = useState(initialTasks);
@@ -65,7 +65,7 @@ function App() {
       title: 'New Card',
       description: 'Describe the work here.',
       owner: 'Unassigned',
-      status: 'To Do',
+      status: 'Backlog',
       priority: 'Medium',
       comments: [],
     };
@@ -80,7 +80,7 @@ function App() {
           <img className="brand-icon" src="/kanban-icon.png" alt="Kanban Board icon" />
           <div>
             <h1>Kanban Board</h1>
-            <p>Discord Activity starter</p>
+            <p>Discord Activity</p>
           </div>
         </div>
 
@@ -368,17 +368,23 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
 }
 
 function SummaryView({ tasks }) {
-  const done = tasks.filter((task) => task.status === 'Done');
+  const done = tasks.filter((task) => task.status === 'Approved');
   const active = tasks.filter(
     (task) => task.status === 'In Progress' || task.status === 'Testing'
   );
-  const nextUp = tasks.filter((task) => task.status === 'To Do');
+  const nextUp = tasks.filter((task) => task.status === 'Backlog');
 
   return (
-    <section className="standup-layout">
-      <SummaryCard title="Completed" subtitle="What finished recently" items={done} />
-      <SummaryCard title="Active Work" subtitle="What the team is doing now" items={active} />
-      <SummaryCard title="Next Up" subtitle="What should be pulled in next" items={nextUp} />
+    <section className="summary-page">
+      <div className="group2-edge-banner">
+        <img src="/group2-banner-wide-thin.png" alt="Group 2 Team Summary banner" />
+      </div>
+
+      <section className="standup-layout">
+        <SummaryCard title="Completed" subtitle="What finished recently" items={done} />
+        <SummaryCard title="Active Work" subtitle="What the team is doing now" items={active} />
+        <SummaryCard title="Next Up" subtitle="What should be pulled in next" items={nextUp} />
+      </section>
     </section>
   );
 }

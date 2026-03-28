@@ -1,13 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { initializeDiscord } from './discord';
-import { initialTasks, owners } from './data';
+import { owners } from './data';
 
-const STATUSES = ['Backlog', 'In Progress', 'Testing', 'Approved'];
+const STATUS_LABELS = {
+  todo: 'Backlog',
+  inprogress: 'In Progress',
+  testing: 'Testing',
+  done: 'Approved',
+};
+
+const STATUS_ORDER = ['todo', 'inprogress', 'testing', 'done'];
 
 function App() {
-  const [tasks, setTasks] = useState(initialTasks);
+  const [tasks, setTasks] = useState([]);
   const [activeView, setActiveView] = useState('board');
   const [selectedTask, setSelectedTask] = useState(null);
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
@@ -17,8 +28,56 @@ function App() {
     initializeDiscord().then(setDiscordState);
   }, []);
 
+  useEffect(() => {
+    loadTasks();
+  }, []);
+
+  async function apiFetch(url, options = {}) {
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || 'Request failed.');
+    }
+
+    return data;
+  }
+
+  function mapCardToTask(card) {
+    return {
+      id: card.id,
+      title: card.title,
+      description: card.description || '',
+      status: card.status,
+      owner: card.owner || 'Unassigned',
+      priority: card.priority || 'Medium',
+      comments: Array.isArray(card.comments) ? card.comments : [],
+      created_at: card.created_at || '',
+    };
+  }
+
+  async function loadTasks() {
+    try {
+      setLoading(true);
+      setError('');
+      const data = await apiFetch('/api/cards');
+      setTasks((data.cards || []).map(mapCardToTask));
+    } catch (err) {
+      setError(err.message || 'Failed to load cards.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const groupedTasks = useMemo(() => {
-    return STATUSES.reduce((acc, status) => {
+    return STATUS_ORDER.reduce((acc, status) => {
       acc[status] = tasks.filter((task) => task.status === status);
       return acc;
     }, {});
@@ -32,45 +91,137 @@ function App() {
     setSelectedTask(null);
   }
 
-  function saveTask(updatedTask) {
-    setTasks((current) =>
-      current.map((task) => (task.id === updatedTask.id ? updatedTask : task))
+  async function saveTask(updatedTask) {
+    try {
+      setSaving(true);
+      setError('');
+
+      const data = await apiFetch(`/api/cards/${updatedTask.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: updatedTask.title,
+          description: updatedTask.description || '',
+          status: updatedTask.status,
+          owner: updatedTask.owner || 'Unassigned',
+          priority: updatedTask.priority || 'Medium',
+          comments: updatedTask.comments || [],
+        }),
+      });
+
+      const savedTask = mapCardToTask(data.card);
+
+      setTasks((current) =>
+        current.map((task) => (task.id === savedTask.id ? savedTask : task))
+      );
+      setSelectedTask(null);
+    } catch (err) {
+      setError(err.message || 'Failed to save card.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteTask(taskId) {
+    try {
+      setSaving(true);
+      setError('');
+
+      await apiFetch(`/api/cards/${taskId}`, {
+        method: 'DELETE',
+      });
+
+      setTasks((current) => current.filter((task) => task.id !== taskId));
+      setSelectedTask((current) => (current && current.id === taskId ? null : current));
+    } catch (err) {
+      setError(err.message || 'Failed to delete card.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function requestDelete(task) {
+    setDeleteCandidate(task);
+  }
+
+  function cancelDelete() {
+    setDeleteCandidate(null);
+  }
+
+  function confirmDelete() {
+    if (!deleteCandidate) return;
+    deleteTask(deleteCandidate.id);
+    setDeleteCandidate(null);
+  }
+
+  async function moveTask(taskId, direction) {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) return;
+
+    const currentIndex = STATUS_ORDER.indexOf(task.status);
+    const nextIndex = Math.min(
+      STATUS_ORDER.length - 1,
+      Math.max(0, currentIndex + direction)
     );
-    setSelectedTask(updatedTask);
+
+    if (nextIndex === currentIndex) return;
+
+    const nextStatus = STATUS_ORDER[nextIndex];
+
+    try {
+      setSaving(true);
+      setError('');
+
+      const data = await apiFetch(`/api/cards/${taskId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: task.title,
+          description: task.description || '',
+          status: nextStatus,
+          owner: task.owner || 'Unassigned',
+          priority: task.priority || 'Medium',
+          comments: task.comments || [],
+        }),
+      });
+
+      const savedTask = mapCardToTask(data.card);
+
+      setTasks((current) =>
+        current.map((item) => (item.id === savedTask.id ? savedTask : item))
+      );
+    } catch (err) {
+      setError(err.message || 'Failed to move card.');
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function deleteTask(taskId) {
-    setTasks((current) => current.filter((task) => task.id !== taskId));
-    setSelectedTask((current) => (current && current.id === taskId ? null : current));
-  }
+  async function createTask() {
+    try {
+      setSaving(true);
+      setError('');
 
-  function moveTask(taskId, direction) {
-    setTasks((current) =>
-      current.map((task) => {
-        if (task.id !== taskId) return task;
-        const currentIndex = STATUSES.indexOf(task.status);
-        const nextIndex = Math.min(
-          STATUSES.length - 1,
-          Math.max(0, currentIndex + direction)
-        );
-        return { ...task, status: STATUSES[nextIndex] };
-      })
-    );
-  }
+      const data = await apiFetch('/api/cards', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'New Card',
+          description: 'Describe the work here.',
+          status: 'todo',
+          owner: 'Unassigned',
+          priority: 'Medium',
+          comments: [],
+        }),
+      });
 
-  function createTask() {
-    const nextId = tasks.length ? Math.max(...tasks.map((task) => task.id)) + 1 : 1;
-    const newTask = {
-      id: nextId,
-      title: 'New Card',
-      description: 'Describe the work here.',
-      owner: 'Unassigned',
-      status: 'Backlog',
-      priority: 'Medium',
-      comments: [],
-    };
-    setTasks((current) => [newTask, ...current]);
-    setSelectedTask(newTask);
+      const newTask = mapCardToTask(data.card);
+
+      setTasks((current) => [newTask, ...current]);
+      setSelectedTask(newTask);
+      setActiveView('board');
+    } catch (err) {
+      setError(err.message || 'Failed to create card.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -80,7 +231,7 @@ function App() {
           <img className="brand-icon" src="/kanban-icon.png" alt="Kanban Board icon" />
           <div>
             <h1>Kanban Board</h1>
-            <p>Discord Activity</p>
+            <p>Discord Activity starter</p>
           </div>
         </div>
 
@@ -105,14 +256,21 @@ function App() {
         </div>
 
         <div className="tip-panel">
-          <h3>Starter Scope</h3>
+          <h3>Current Scope</h3>
           <ul>
-            <li>Build the board first</li>
-            <li>Use modal editing</li>
-            <li>Use buttons for column changes</li>
-            <li>Add integrations later</li>
+            <li>Cloudflare Pages frontend</li>
+            <li>Pages Functions backend</li>
+            <li>D1 card storage</li>
+            <li>Full task fields enabled</li>
           </ul>
         </div>
+
+        {error ? (
+          <div className="discord-panel" style={{ borderColor: '#7f1d1d' }}>
+            <h3>Error</h3>
+            <p>{error}</p>
+          </div>
+        ) : null}
       </aside>
 
       <main className="main-content">
@@ -121,17 +279,25 @@ function App() {
             <h2>Kanban Board</h2>
             <p>Track work items inside your Discord Activity.</p>
           </div>
-          <button className="primary-btn" onClick={createTask}>
-            + New Card
+          <button className="primary-btn" onClick={createTask} disabled={saving}>
+            {saving ? 'Working...' : '+ New Card'}
           </button>
         </header>
 
-        {activeView === 'board' ? (
+        {loading ? (
+          <section className="summary-page">
+            <div className="standup-card">
+              <h3>Loading</h3>
+              <p>Loading cards from the backend...</p>
+            </div>
+          </section>
+        ) : activeView === 'board' ? (
           <BoardView
             groupedTasks={groupedTasks}
             onOpenTask={openTask}
             onMoveTask={moveTask}
-            onDeleteTask={deleteTask}
+            onRequestDelete={requestDelete}
+            saving={saving}
           />
         ) : (
           <SummaryView tasks={tasks} />
@@ -143,49 +309,56 @@ function App() {
           task={selectedTask}
           onClose={closeTask}
           onSave={saveTask}
-          onDelete={deleteTask}
-          owners={owners}
+          onRequestDelete={requestDelete}
+          saving={saving}
+        />
+      )}
+
+      {deleteCandidate && (
+        <DeleteConfirmModal
+          task={deleteCandidate}
+          onCancel={cancelDelete}
+          onConfirm={confirmDelete}
+          saving={saving}
         />
       )}
     </div>
   );
 }
 
-function BoardView({ groupedTasks, onOpenTask, onMoveTask, onDeleteTask }) {
+function BoardView({ groupedTasks, onOpenTask, onMoveTask, onRequestDelete, saving }) {
   return (
     <section className="board-grid">
-      {Object.entries(groupedTasks).map(([status, tasks]) => (
-        <div key={status} className="column">
-          <div className="column-header">
-            <h3>{status}</h3>
-            <span>{tasks.length}</span>
-          </div>
+      {STATUS_ORDER.map((status) => {
+        const tasks = groupedTasks[status] || [];
 
-          <div className="card-stack">
-            {tasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onOpenTask={onOpenTask}
-                onMoveTask={onMoveTask}
-                onDeleteTask={onDeleteTask}
-              />
-            ))}
+        return (
+          <div key={status} className="column">
+            <div className="column-header">
+              <h3>{STATUS_LABELS[status]}</h3>
+              <span>{tasks.length}</span>
+            </div>
+
+            <div className="card-stack">
+              {tasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onOpenTask={onOpenTask}
+                  onMoveTask={onMoveTask}
+                  onRequestDelete={onRequestDelete}
+                  saving={saving}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </section>
   );
 }
 
-function TaskCard({ task, onOpenTask, onMoveTask, onDeleteTask }) {
-  function confirmDelete() {
-    const confirmed = window.confirm(`Delete "${task.title}"?`);
-    if (confirmed) {
-      onDeleteTask(task.id);
-    }
-  }
-
+function TaskCard({ task, onOpenTask, onMoveTask, onRequestDelete, saving }) {
   return (
     <article className="task-card">
       <div className="task-card-top">
@@ -200,32 +373,40 @@ function TaskCard({ task, onOpenTask, onMoveTask, onDeleteTask }) {
       </div>
 
       <div className="task-actions">
-        <button onClick={() => onMoveTask(task.id, -1)}>Back</button>
+        <button onClick={() => onMoveTask(task.id, -1)} disabled={saving || task.status === 'todo'}>
+          Back
+        </button>
 
         <div className="task-actions-middle">
-          <button onClick={() => onOpenTask(task)}>Edit</button>
+          <button onClick={() => onOpenTask(task)} disabled={saving}>
+            Edit
+          </button>
           <button
             className="delete-icon-btn"
-            onClick={confirmDelete}
+            onClick={() => onRequestDelete(task)}
             title="Delete card"
             aria-label="Delete card"
+            disabled={saving}
           >
             🗑
           </button>
         </div>
 
-        <button onClick={() => onMoveTask(task.id, 1)}>Forward</button>
+        <button onClick={() => onMoveTask(task.id, 1)} disabled={saving || task.status === 'done'}>
+          Forward
+        </button>
       </div>
     </article>
   );
 }
 
-function TaskModal({ task, onClose, onSave, onDelete, owners }) {
+function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
   const [form, setForm] = useState(task);
   const [commentText, setCommentText] = useState('');
 
   useEffect(() => {
     setForm(task);
+    setCommentText('');
   }, [task]);
 
   function updateField(field, value) {
@@ -233,34 +414,39 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
   }
 
   function addComment() {
-    if (!commentText.trim()) return;
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
+
     setForm((current) => ({
       ...current,
-      comments: [...current.comments, commentText.trim()],
+      comments: [...(current.comments || []), trimmed],
     }));
     setCommentText('');
+  }
+
+  function removeComment(indexToRemove) {
+    setForm((current) => ({
+      ...current,
+      comments: (current.comments || []).filter((_, index) => index !== indexToRemove),
+    }));
   }
 
   function submit(e) {
     e.preventDefault();
     onSave(form);
-    onClose();
   }
 
-  function handleDelete() {
-  const confirmed = window.confirm(`Delete "${form.title}"?`);
-  if (confirmed) {
-    onDelete(form.id);
+  function handleDeleteClick() {
     onClose();
+    onRequestDelete(form);
   }
-}
 
   return (
     <div className="modal-backdrop">
       <div className="modal">
         <div className="modal-header">
           <h3>Edit Card</h3>
-          <button className="close-btn" onClick={onClose}>
+          <button className="close-btn" onClick={onClose} disabled={saving}>
             ×
           </button>
         </div>
@@ -295,6 +481,9 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
                     {owner}
                   </option>
                 ))}
+                {!owners.includes('Unassigned') ? (
+                  <option value="Unassigned">Unassigned</option>
+                ) : null}
               </select>
             </label>
 
@@ -304,9 +493,9 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
                 value={form.status}
                 onChange={(e) => updateField('status', e.target.value)}
               >
-                {STATUSES.map((status) => (
+                {STATUS_ORDER.map((status) => (
                   <option key={status} value={status}>
-                    {status}
+                    {STATUS_LABELS[status]}
                   </option>
                 ))}
               </select>
@@ -327,15 +516,23 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
 
           <div className="comments-panel">
             <h4>Comments</h4>
-            {form.comments.length === 0 ? (
+            {(form.comments || []).length === 0 ? (
               <p className="empty-note">No comments yet.</p>
             ) : (
               <ul>
-                {form.comments.map((comment, index) => (
-                  <li key={index}>{comment}</li>
+                {(form.comments || []).map((comment, index) => (
+                  <li key={index}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                      <span>{comment}</span>
+                      <button type="button" onClick={() => removeComment(index)}>
+                        Remove
+                      </button>
+                    </div>
+                  </li>
                 ))}
               </ul>
             )}
+
             <div className="comment-entry">
               <input
                 placeholder="Add a comment"
@@ -349,15 +546,15 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
           </div>
 
           <div className="modal-actions">
-            <button type="button" onClick={handleDelete} className="delete-btn">
+            <button type="button" onClick={handleDeleteClick} className="delete-btn" disabled={saving}>
               Delete Card
             </button>
             <div className="action-group">
-              <button type="button" onClick={onClose} className="secondary-btn">
+              <button type="button" onClick={onClose} className="secondary-btn" disabled={saving}>
                 Cancel
               </button>
-              <button type="submit" className="primary-btn">
-                Save Card
+              <button type="submit" className="primary-btn" disabled={saving}>
+                {saving ? 'Saving...' : 'Save Card'}
               </button>
             </div>
           </div>
@@ -367,12 +564,42 @@ function TaskModal({ task, onClose, onSave, onDelete, owners }) {
   );
 }
 
-function SummaryView({ tasks }) {
-  const done = tasks.filter((task) => task.status === 'Approved');
-  const active = tasks.filter(
-    (task) => task.status === 'In Progress' || task.status === 'Testing'
+function DeleteConfirmModal({ task, onCancel, onConfirm, saving }) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal confirm-modal">
+        <div className="modal-header">
+          <h3>Delete Card</h3>
+          <button className="close-btn" onClick={onCancel} disabled={saving}>
+            ×
+          </button>
+        </div>
+
+        <div className="modal-form">
+          <p>
+            Are you sure you want to delete <strong>{task.title}</strong>?
+          </p>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel} className="secondary-btn" disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="delete-btn" disabled={saving}>
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
-  const nextUp = tasks.filter((task) => task.status === 'Backlog');
+}
+
+function SummaryView({ tasks }) {
+  const done = tasks.filter((task) => task.status === 'done');
+  const active = tasks.filter(
+    (task) => task.status === 'inprogress' || task.status === 'testing'
+  );
+  const nextUp = tasks.filter((task) => task.status === 'todo');
 
   return (
     <section className="summary-page">

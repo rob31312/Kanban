@@ -113,6 +113,10 @@ button { cursor: pointer; }
   line-height: 1;
 }
 
+.confirm-modal {
+  max-width: 460px;
+}
+
 .primary-btn {
   color: white;
   background: linear-gradient(135deg, #2563eb, #7c3aed);

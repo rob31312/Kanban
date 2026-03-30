@@ -24,19 +24,29 @@ function mapRow(row) {
       }
     })(),
     is_approved: Boolean(row.is_approved),
+    channel_id: row.channel_id || "global",
     created_at: row.created_at,
   };
 }
 
+function getChannelIdFromUrl(request) {
+  const url = new URL(request.url);
+  return (url.searchParams.get("channel_id") || "global").trim();
+}
+
 export async function onRequestGet(context) {
   try {
-    const { env } = context;
+    const { env, request } = context;
+    const channelId = getChannelIdFromUrl(request);
 
     const result = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, is_approved, created_at
+      SELECT id, title, description, status, owner, priority, comments, is_approved, channel_id, created_at
       FROM cards
+      WHERE channel_id = ?
       ORDER BY id ASC
-    `).all();
+    `)
+      .bind(channelId)
+      .all();
 
     return Response.json({
       success: true,
@@ -65,6 +75,7 @@ export async function onRequestPost(context) {
     const priority = (body.priority || "Medium").trim();
     const comments = normalizeComments(body.comments);
     const isApproved = body.is_approved ? 1 : 0;
+    const channelId = (body.channel_id || "global").trim();
 
     const allowedStatuses = ["todo", "inprogress", "testing", "done"];
     const allowedPriorities = ["High", "Medium", "Low"];
@@ -72,6 +83,13 @@ export async function onRequestPost(context) {
     if (!title) {
       return Response.json(
         { success: false, error: "Title is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!channelId) {
+      return Response.json(
+        { success: false, error: "channel_id is required." },
         { status: 400 }
       );
     }
@@ -91,8 +109,8 @@ export async function onRequestPost(context) {
     }
 
     await env.DB.prepare(`
-      INSERT INTO cards (title, description, status, owner, priority, comments, is_approved)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (title, description, status, owner, priority, comments, is_approved, channel_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .bind(
         title,
@@ -101,16 +119,20 @@ export async function onRequestPost(context) {
         owner || "Unassigned",
         priority,
         JSON.stringify(comments),
-        isApproved
+        isApproved,
+        channelId
       )
       .run();
 
     const row = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, is_approved, created_at
+      SELECT id, title, description, status, owner, priority, comments, is_approved, channel_id, created_at
       FROM cards
+      WHERE channel_id = ?
       ORDER BY id DESC
       LIMIT 1
-    `).first();
+    `)
+      .bind(channelId)
+      .first();
 
     return Response.json({
       success: true,

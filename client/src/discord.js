@@ -9,6 +9,7 @@ export async function initializeDiscord() {
     return {
       enabled: false,
       message: 'Discord SDK not initialized because VITE_DISCORD_CLIENT_ID is missing.',
+      channelId: 'global',
     };
   }
 
@@ -19,12 +20,14 @@ export async function initializeDiscord() {
     return {
       enabled: true,
       message: 'Connected to Discord Activity environment.',
+      channelId: discordSdk.channelId || 'global',
     };
   } catch (error) {
     return {
       enabled: false,
       message: 'Running outside Discord or Discord SDK failed to initialize.',
       error,
+      channelId: 'global',
     };
   }
 }

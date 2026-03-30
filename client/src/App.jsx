@@ -20,49 +20,24 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [currentUserName] = useState('User');
-  const [fatalError, setFatalError] = useState('');
+  const [currentChannelId, setCurrentChannelId] = useState('global');
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
   });
 
   useEffect(() => {
-    initializeDiscord()
-      .then((state) => {
-        setDiscordState(state);
-      })
-      .catch((error) => {
-        setFatalError(error?.stack || error?.message || String(error));
-      });
+    initializeDiscord().then((state) => {
+      setDiscordState(state);
+      setCurrentChannelId(state?.channelId || 'global');
+    });
   }, []);
 
- useEffect(() => {
-  function handleError(event) {
-    setFatalError(event?.error?.stack || event?.message || 'Unknown runtime error');
-  }
-
-  function handleRejection(event) {
-    const reason = event?.reason;
-    setFatalError(
-      reason?.stack ||
-      reason?.message ||
-      String(reason) ||
-      'Unhandled promise rejection'
-    );
-  }
-
-  window.addEventListener('error', handleError);
-  window.addEventListener('unhandledrejection', handleRejection);
-
-  return () => {
-    window.removeEventListener('error', handleError);
-    window.removeEventListener('unhandledrejection', handleRejection);
-  };
-}, []);
- 
   useEffect(() => {
-    loadTasks();
-  }, []);
+    if (currentChannelId) {
+      loadTasks(currentChannelId);
+    }
+  }, [currentChannelId]);
 
   async function apiFetch(url, options = {}) {
     const response = await fetch(url, {
@@ -92,6 +67,7 @@ function App() {
       priority: card.priority || 'Medium',
       comments: Array.isArray(card.comments) ? card.comments : [],
       is_approved: Boolean(card.is_approved),
+      channel_id: card.channel_id || 'global',
       created_at: card.created_at || '',
     };
   }
@@ -168,11 +144,11 @@ function App() {
     return auditComments;
   }
 
-  async function loadTasks() {
+  async function loadTasks(channelId) {
     try {
       setLoading(true);
       setError('');
-      const data = await apiFetch('/api/cards');
+      const data = await apiFetch(`/api/cards?channel_id=${encodeURIComponent(channelId)}`);
       setTasks((data.cards || []).map(mapCardToTask));
     } catch (err) {
       setError(err.message || 'Failed to load cards.');
@@ -230,6 +206,7 @@ function App() {
           priority: updatedTask.priority || 'Medium',
           comments: finalComments,
           is_approved: updatedTask.is_approved || false,
+          channel_id: currentChannelId,
         }),
       });
 
@@ -251,7 +228,7 @@ function App() {
       setSaving(true);
       setError('');
 
-      await apiFetch(`/api/cards/${taskId}`, {
+      await apiFetch(`/api/cards/${taskId}?channel_id=${encodeURIComponent(currentChannelId)}`, {
         method: 'DELETE',
       });
 
@@ -310,6 +287,7 @@ function App() {
           priority: task.priority || 'Medium',
           comments: finalComments,
           is_approved: false,
+          channel_id: currentChannelId,
         }),
       });
 
@@ -350,6 +328,7 @@ function App() {
           priority: task.priority || 'Medium',
           comments: finalComments,
           is_approved: true,
+          channel_id: currentChannelId,
         }),
       });
 
@@ -380,6 +359,7 @@ function App() {
           priority: 'Medium',
           comments: [makeSystemComment('Card created')],
           is_approved: false,
+          channel_id: currentChannelId,
         }),
       });
 
@@ -397,27 +377,6 @@ function App() {
 
   return (
     <div className="app-shell">
-      {fatalError ? (
-        <div
-          style={{
-            position: 'fixed',
-            top: '12px',
-            left: '12px',
-            right: '12px',
-            zIndex: 9999,
-            background: '#451a1a',
-            color: '#fff',
-            border: '1px solid #7f1d1d',
-            borderRadius: '8px',
-            padding: '12px',
-            whiteSpace: 'pre-wrap',
-            fontSize: '12px',
-          }}
-        >
-            <strong>Runtime Error:</strong>
-            <div>{fatalError}</div>
-        </div>
-      ) : null}
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-icon" src="/kanban-icon.png" alt="Kanban Board icon" />
@@ -445,6 +404,9 @@ function App() {
         <div className="discord-panel">
           <h3>Discord Status</h3>
           <p>{discordState.message}</p>
+          <p style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
+            Channel: {currentChannelId}
+          </p>
         </div>
 
         <div className="tip-panel">
@@ -455,6 +417,7 @@ function App() {
             <li>D1 card storage</li>
             <li>Approval workflow enabled</li>
             <li>Audit trail enabled</li>
+            <li>Channel scoped board</li>
           </ul>
         </div>
 
@@ -768,20 +731,43 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
             {(form.comments || []).length === 0 ? (
               <p className="empty-note">No comments yet.</p>
             ) : (
-              <ul>
-                {(form.comments || []).map((comment, index) => (
-                  <li key={index}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
-                      <span>{comment}</span>
-                      <button type="button" onClick={() => removeComment(index)} disabled={saving || form.is_approved}>
-                        Remove
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div
+                style={{
+                  maxHeight: '180px',
+                  overflowY: 'auto',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '8px',
+                  padding: '8px',
+                  background: 'rgba(0,0,0,0.12)',
+                }}
+              >
+                <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                  {(form.comments || []).map((comment, index) => (
+                    <li key={index} style={{ marginBottom: '8px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: '8px',
+                          alignItems: 'flex-start',
+                        }}
+                      >
+                        <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                          {comment}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeComment(index)}
+                          disabled={saving || form.is_approved}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
-
             <div className="comment-entry">
               <input
                 placeholder="Add a comment"

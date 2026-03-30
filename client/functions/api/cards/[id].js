@@ -24,6 +24,7 @@ function mapRow(row) {
       }
     })(),
     is_approved: Boolean(row.is_approved),
+    channel_id: row.channel_id || "global",
     created_at: row.created_at,
   };
 }
@@ -48,6 +49,7 @@ export async function onRequestPut(context) {
     const priority = (body.priority || "Medium").trim();
     const comments = normalizeComments(body.comments);
     const isApproved = body.is_approved ? 1 : 0;
+    const channelId = (body.channel_id || "global").trim();
 
     const allowedStatuses = ["todo", "inprogress", "testing", "done"];
     const allowedPriorities = ["High", "Medium", "Low"];
@@ -55,6 +57,13 @@ export async function onRequestPut(context) {
     if (!title) {
       return Response.json(
         { success: false, error: "Title is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!channelId) {
+      return Response.json(
+        { success: false, error: "channel_id is required." },
         { status: 400 }
       );
     }
@@ -76,14 +85,14 @@ export async function onRequestPut(context) {
     const existing = await env.DB.prepare(`
       SELECT id
       FROM cards
-      WHERE id = ?
+      WHERE id = ? AND channel_id = ?
     `)
-      .bind(id)
+      .bind(id, channelId)
       .first();
 
     if (!existing) {
       return Response.json(
-        { success: false, error: "Card not found." },
+        { success: false, error: "Card not found in this channel." },
         { status: 404 }
       );
     }
@@ -91,7 +100,7 @@ export async function onRequestPut(context) {
     await env.DB.prepare(`
       UPDATE cards
       SET title = ?, description = ?, status = ?, owner = ?, priority = ?, comments = ?, is_approved = ?
-      WHERE id = ?
+      WHERE id = ? AND channel_id = ?
     `)
       .bind(
         title,
@@ -101,16 +110,17 @@ export async function onRequestPut(context) {
         priority,
         JSON.stringify(comments),
         isApproved,
-        id
+        id,
+        channelId
       )
       .run();
 
     const updated = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, is_approved, created_at
+      SELECT id, title, description, status, owner, priority, comments, is_approved, channel_id, created_at
       FROM cards
-      WHERE id = ?
+      WHERE id = ? AND channel_id = ?
     `)
-      .bind(id)
+      .bind(id, channelId)
       .first();
 
     return Response.json({
@@ -130,8 +140,10 @@ export async function onRequestPut(context) {
 
 export async function onRequestDelete(context) {
   try {
-    const { env, params } = context;
+    const { env, request, params } = context;
     const id = Number(params.id);
+    const url = new URL(request.url);
+    const channelId = (url.searchParams.get("channel_id") || "global").trim();
 
     if (!Number.isInteger(id) || id <= 0) {
       return Response.json(
@@ -143,23 +155,23 @@ export async function onRequestDelete(context) {
     const existing = await env.DB.prepare(`
       SELECT id
       FROM cards
-      WHERE id = ?
+      WHERE id = ? AND channel_id = ?
     `)
-      .bind(id)
+      .bind(id, channelId)
       .first();
 
     if (!existing) {
       return Response.json(
-        { success: false, error: "Card not found." },
+        { success: false, error: "Card not found in this channel." },
         { status: 404 }
       );
     }
 
     await env.DB.prepare(`
       DELETE FROM cards
-      WHERE id = ?
+      WHERE id = ? AND channel_id = ?
     `)
-      .bind(id)
+      .bind(id, channelId)
       .run();
 
     return Response.json({ success: true });

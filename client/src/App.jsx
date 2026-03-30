@@ -19,7 +19,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [currentUserName] = useState('User');
+  const [currentUserName, setCurrentUserName] = useState('User');
   const [currentChannelId, setCurrentChannelId] = useState('global');
   const [discordState, setDiscordState] = useState({
     enabled: false,
@@ -35,6 +35,7 @@ function App() {
       if (cancelled) return;
 
       setDiscordState(state);
+      setCurrentUserName(state?.displayName || 'User');
 
       const resolvedChannelId = state?.channelId || 'global';
       setCurrentChannelId(resolvedChannelId);

@@ -436,9 +436,18 @@ function App() {
             <p>Track work items inside your Discord Activity.</p>
           </div>
           {activeView === 'board' ? (
-            <button className="primary-btn" onClick={createTask} disabled={saving}>
-              {saving ? 'Working...' : '+ New Card'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                className="secondary-btn"
+                onClick={() => loadTasks(currentChannelId)}
+                disabled={saving || loading}
+              >
+                {loading ? 'Refreshing...' : 'Refresh Board'}
+              </button>
+              <button className="primary-btn" onClick={createTask} disabled={saving}>
+                {saving ? 'Working...' : '+ New Card'}
+              </button>
+            </div>
           ) : null}
         </header>
 
@@ -553,8 +562,26 @@ function TaskCard({ task, onOpenTask, onMoveTask, onApproveTask, onRequestDelete
         </span>
       </div>
 
-      <h4 style={isApproved ? { color: '#f3fff6' } : undefined}>{task.title}</h4>
-      <p style={isApproved ? { color: '#d7eede' } : undefined}>{task.description}</p>
+      <h4
+        style={{
+          ...(isApproved ? { color: '#f3fff6' } : {}),
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {task.title}
+      </h4>
+      <p
+        style={{
+          ...(isApproved ? { color: '#d7eede' } : {}),
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {task.description}
+      </p>
 
       <div className="task-meta">
         <span>Owner: {task.owner}</span>
@@ -665,6 +692,7 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
               value={form.title}
               onChange={(e) => updateField('title', e.target.value)}
               disabled={saving || form.is_approved}
+              maxLength={50}
             />
           </label>
 
@@ -675,6 +703,7 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
               value={form.description}
               onChange={(e) => updateField('description', e.target.value)}
               disabled={saving || form.is_approved}
+              maxLength={500}
             />
           </label>
 

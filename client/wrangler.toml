@@ -16,3 +16,8 @@ VITE_DISCORD_CLIENT_ID = "1488170835297570817"
 binding = "DB"
 database_name = "discord-kanban-db"
 database_id = "46777276-0075-4746-8197-5a802c18480c"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "discord-kanban-db"
+database_id = "46777276-0075-4746-8197-5a802c18480c"

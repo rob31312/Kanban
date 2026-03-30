@@ -20,17 +20,46 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [currentUserName] = useState('User');
+  const [fatalError, setFatalError] = useState('');
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
   });
 
   useEffect(() => {
-    initializeDiscord().then((state) => {
-      setDiscordState(state);
-    });
+    initializeDiscord()
+      .then((state) => {
+        setDiscordState(state);
+      })
+      .catch((error) => {
+        setFatalError(error?.stack || error?.message || String(error));
+      });
   }, []);
 
+ useEffect(() => {
+  function handleError(event) {
+    setFatalError(event?.error?.stack || event?.message || 'Unknown runtime error');
+  }
+
+  function handleRejection(event) {
+    const reason = event?.reason;
+    setFatalError(
+      reason?.stack ||
+      reason?.message ||
+      String(reason) ||
+      'Unhandled promise rejection'
+    );
+  }
+
+  window.addEventListener('error', handleError);
+  window.addEventListener('unhandledrejection', handleRejection);
+
+  return () => {
+    window.removeEventListener('error', handleError);
+    window.removeEventListener('unhandledrejection', handleRejection);
+  };
+}, []);
+ 
   useEffect(() => {
     loadTasks();
   }, []);
@@ -368,6 +397,27 @@ function App() {
 
   return (
     <div className="app-shell">
+      {fatalError ? (
+        <div
+          style={{
+            position: 'fixed',
+            top: '12px',
+            left: '12px',
+            right: '12px',
+            zIndex: 9999,
+            background: '#451a1a',
+            color: '#fff',
+            border: '1px solid #7f1d1d',
+            borderRadius: '8px',
+            padding: '12px',
+            whiteSpace: 'pre-wrap',
+            fontSize: '12px',
+          }}
+        >
+            <strong>Runtime Error:</strong>
+            <div>{fatalError}</div>
+        </div>
+      ) : null}
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-icon" src="/kanban-icon.png" alt="Kanban Board icon" />

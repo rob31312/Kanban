@@ -21,6 +21,7 @@ function App() {
   const [error, setError] = useState('');
   const [currentUserName, setCurrentUserName] = useState('User');
   const [currentChannelId, setCurrentChannelId] = useState('global');
+  const [resetRequested, setResetRequested] = useState(false);
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
@@ -365,13 +366,15 @@ function App() {
     }
   }
 
-  async function resetCurrentBoard() {
-    const confirmed = window.confirm(
-      'Reset this channel board? This will delete all cards in the current channel.'
-    );
+  function resetCurrentBoard() {
+    setResetRequested(true);
+  }
 
-    if (!confirmed) return;
+  function cancelResetBoard() {
+    setResetRequested(false);
+  }
 
+  async function confirmResetBoard() {
     try {
       setSaving(true);
       setError('');
@@ -386,6 +389,7 @@ function App() {
       setTasks([]);
       setSelectedTask(null);
       setDeleteCandidate(null);
+      setResetRequested(false);
     } catch (err) {
       setError(err.message || 'Failed to reset board.');
     } finally {
@@ -534,6 +538,14 @@ function App() {
           onClose={closeTask}
           onSave={saveTask}
           onRequestDelete={requestDelete}
+          saving={saving}
+        />
+      )}
+
+      {resetRequested && (
+        <ResetBoardConfirmModal
+          onCancel={cancelResetBoard}
+          onConfirm={confirmResetBoard}
           saving={saving}
         />
       )}
@@ -949,6 +961,36 @@ function SummaryView({ tasks, onResetBoard, saving }) {
         <SummaryCard title="Next Up" subtitle="What should be pulled in next" items={nextUp} />
       </section>
     </section>
+  );
+}
+
+function ResetBoardConfirmModal({ onCancel, onConfirm, saving }) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal confirm-modal">
+        <div className="modal-header">
+          <h3>Reset Current Board</h3>
+          <button className="close-btn" onClick={onCancel} disabled={saving}>
+            ×
+          </button>
+        </div>
+
+        <div className="modal-form">
+          <p>
+            Are you sure you want to delete all cards in the current channel?
+          </p>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel} className="secondary-btn" disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="delete-btn" disabled={saving}>
+              {saving ? 'Working...' : 'Reset Board'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -27,10 +27,30 @@ function App() {
   });
 
   useEffect(() => {
-    initializeDiscord().then((state) => {
+    let cancelled = false;
+
+    async function initDiscord() {
+      const state = await initializeDiscord();
+
+      if (cancelled) return;
+
       setDiscordState(state);
-      setCurrentChannelId(state?.channelId || 'global');
-    });
+
+      const resolvedChannelId = state?.channelId || 'global';
+      setCurrentChannelId(resolvedChannelId);
+
+      setTimeout(() => {
+        if (!cancelled) {
+          loadTasks(resolvedChannelId);
+        }
+      }, 800);
+    }
+
+    initDiscord();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

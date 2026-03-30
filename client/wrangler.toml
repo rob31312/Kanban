@@ -9,6 +9,9 @@ VITE_DISCORD_CLIENT_ID = "1485323032774840401"
 [env.production.vars]
 VITE_DISCORD_CLIENT_ID = "1485323032774840401"
 
+[env.preview.vars]
+VITE_DISCORD_CLIENT_ID = "1488170835297570817"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "discord-kanban-db"

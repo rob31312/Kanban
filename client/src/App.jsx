@@ -365,6 +365,34 @@ function App() {
     }
   }
 
+  async function resetCurrentBoard() {
+    const confirmed = window.confirm(
+      'Reset this channel board? This will delete all cards in the current channel.'
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setSaving(true);
+      setError('');
+
+      await apiFetch('/api/cards/reset', {
+        method: 'POST',
+        body: JSON.stringify({
+          channel_id: currentChannelId,
+        }),
+      });
+
+      setTasks([]);
+      setSelectedTask(null);
+      setDeleteCandidate(null);
+    } catch (err) {
+      setError(err.message || 'Failed to reset board.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function createTask() {
     try {
       setSaving(true);
@@ -492,7 +520,11 @@ function App() {
             saving={saving}
           />
         ) : (
-          <SummaryView tasks={tasks} />
+          <SummaryView
+            tasks={tasks}
+            onResetBoard={resetCurrentBoard}
+            saving={saving}
+          />
         )}
       </main>
 
@@ -887,7 +919,7 @@ function DeleteConfirmModal({ task, onCancel, onConfirm, saving }) {
   );
 }
 
-function SummaryView({ tasks }) {
+function SummaryView({ tasks, onResetBoard, saving }) {
   const done = tasks.filter((task) => task.status === 'done');
   const active = tasks.filter(
     (task) => task.status === 'inprogress' || task.status === 'testing'
@@ -898,6 +930,17 @@ function SummaryView({ tasks }) {
     <section className="summary-page">
       <div className="group2-edge-banner">
         <img src="/group2-banner-wide-thin.png" alt="Group 2 Team Summary banner" />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+        <button
+          type="button"
+          className="delete-btn"
+          onClick={onResetBoard}
+          disabled={saving}
+        >
+          {saving ? 'Working...' : 'Reset Current Board'}
+        </button>
       </div>
 
       <section className="standup-layout">

@@ -47,6 +47,7 @@ export async function initializeDiscord() {
       message: 'Discord SDK not initialized because VITE_DISCORD_CLIENT_ID is missing.',
       channelId: 'global',
       displayName: 'User',
+      authStatus: 'missing client id',
     };
   }
 
@@ -55,27 +56,36 @@ export async function initializeDiscord() {
     await discordSdk.ready();
 
     let displayName = 'User';
+    let authStatus = 'not attempted';
 
     try {
-      const authorizeResult = await discordSdk.commands.authorize({
+      const { code } = await discordSdk.commands.authorize({
         client_id: clientId,
         response_type: 'code',
-        prompt: 'none',
-        scope: ['identify'],
         state: '',
+        prompt: 'none',
+        scope: ['identify', 'guilds', 'applications.commands'],
       });
 
-      if (authorizeResult?.code) {
-        const accessToken = await exchangeCodeForToken(authorizeResult.code);
-
-        const auth = await discordSdk.commands.authenticate({
-          access_token: accessToken,
-        });
-
-        displayName = getDisplayName(auth?.user);
+      if (!code) {
+        throw new Error('No authorization code returned from Discord.');
       }
+
+      const accessToken = await exchangeCodeForToken(code);
+
+      const auth = await discordSdk.commands.authenticate({
+        access_token: accessToken,
+      });
+
+      if (!auth) {
+        throw new Error('Authenticate command failed.');
+      }
+
+      displayName = getDisplayName(auth.user);
+      authStatus = `authenticated as ${displayName}`;
     } catch (authError) {
-      console.warn('Discord user auth did not complete, falling back to generic user name.', authError);
+      authStatus = authError?.message || String(authError);
+      console.warn('Discord user auth failed:', authError);
     }
 
     return {
@@ -83,6 +93,7 @@ export async function initializeDiscord() {
       message: 'Connected to Discord Activity environment.',
       channelId: discordSdk.channelId || 'global',
       displayName,
+      authStatus,
     };
   } catch (error) {
     return {
@@ -91,6 +102,7 @@ export async function initializeDiscord() {
       error,
       channelId: 'global',
       displayName: 'User',
+      authStatus: error?.message || String(error),
     };
   }
 }

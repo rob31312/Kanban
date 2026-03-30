@@ -428,6 +428,9 @@ function App() {
           <p style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
             Channel: {currentChannelId}
           </p>
+          <p style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
+            User Auth: {discordState.authStatus || 'unknown'}
+          </p>
         </div>
 
         <div className="tip-panel">

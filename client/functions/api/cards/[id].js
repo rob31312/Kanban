@@ -23,6 +23,7 @@ function mapRow(row) {
         return [];
       }
     })(),
+    is_approved: Boolean(row.is_approved),
     created_at: row.created_at,
   };
 }
@@ -46,6 +47,7 @@ export async function onRequestPut(context) {
     const owner = (body.owner || "Unassigned").trim();
     const priority = (body.priority || "Medium").trim();
     const comments = normalizeComments(body.comments);
+    const isApproved = body.is_approved ? 1 : 0;
 
     const allowedStatuses = ["todo", "inprogress", "testing", "done"];
     const allowedPriorities = ["High", "Medium", "Low"];
@@ -88,7 +90,7 @@ export async function onRequestPut(context) {
 
     await env.DB.prepare(`
       UPDATE cards
-      SET title = ?, description = ?, status = ?, owner = ?, priority = ?, comments = ?
+      SET title = ?, description = ?, status = ?, owner = ?, priority = ?, comments = ?, is_approved = ?
       WHERE id = ?
     `)
       .bind(
@@ -98,12 +100,13 @@ export async function onRequestPut(context) {
         owner || "Unassigned",
         priority,
         JSON.stringify(comments),
+        isApproved,
         id
       )
       .run();
 
     const updated = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, created_at
+      SELECT id, title, description, status, owner, priority, comments, is_approved, created_at
       FROM cards
       WHERE id = ?
     `)

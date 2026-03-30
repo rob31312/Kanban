@@ -23,6 +23,7 @@ function mapRow(row) {
         return [];
       }
     })(),
+    is_approved: Boolean(row.is_approved),
     created_at: row.created_at,
   };
 }
@@ -32,7 +33,7 @@ export async function onRequestGet(context) {
     const { env } = context;
 
     const result = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, created_at
+      SELECT id, title, description, status, owner, priority, comments, is_approved, created_at
       FROM cards
       ORDER BY id ASC
     `).all();
@@ -63,6 +64,7 @@ export async function onRequestPost(context) {
     const owner = (body.owner || "Unassigned").trim();
     const priority = (body.priority || "Medium").trim();
     const comments = normalizeComments(body.comments);
+    const isApproved = body.is_approved ? 1 : 0;
 
     const allowedStatuses = ["todo", "inprogress", "testing", "done"];
     const allowedPriorities = ["High", "Medium", "Low"];
@@ -89,8 +91,8 @@ export async function onRequestPost(context) {
     }
 
     await env.DB.prepare(`
-      INSERT INTO cards (title, description, status, owner, priority, comments)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (title, description, status, owner, priority, comments, is_approved)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
       .bind(
         title,
@@ -98,12 +100,13 @@ export async function onRequestPost(context) {
         status,
         owner || "Unassigned",
         priority,
-        JSON.stringify(comments)
+        JSON.stringify(comments),
+        isApproved
       )
       .run();
 
     const row = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, created_at
+      SELECT id, title, description, status, owner, priority, comments, is_approved, created_at
       FROM cards
       ORDER BY id DESC
       LIMIT 1

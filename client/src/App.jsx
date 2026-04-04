@@ -731,7 +731,7 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
           : undefined
       }
     >
-      <div className="task-card-top">
+      <div className="task-card-top" style={{ marginBottom: '10px' }}>
         <span
           className="priority-chip"
           style={
@@ -751,6 +751,8 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
       <h4
         style={{
           ...(isApproved ? { color: '#f3fff6' } : {}),
+          marginTop: 0,
+          marginBottom: '8px',
           overflowWrap: 'anywhere',
           wordBreak: 'break-word',
           whiteSpace: 'pre-wrap',
@@ -1221,7 +1223,7 @@ function SummaryView({ tasks, onResetBoard, saving }) {
       <div
         className="group2-edge-banner"
         style={{
-          height: '72px',
+          height: '200px',
           overflow: 'hidden',
           borderRadius: '12px',
           marginBottom: '16px',

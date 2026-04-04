@@ -174,6 +174,52 @@ export async function onRequestPost(context) {
       );
     }
 
+    if (createdByUserId) {
+      const minuteRateRow = await env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM cards
+        WHERE channel_id = ?
+          AND created_by_user_id = ?
+          AND created_at >= datetime('now', '-1 minute')
+      `)
+        .bind(channelId, createdByUserId)
+        .first();
+
+      const minuteCount = Number(minuteRateRow?.count || 0);
+
+      if (minuteCount >= 5) {
+        return Response.json(
+          {
+            success: false,
+            error: "Rate limit reached. Please wait a minute before creating more cards.",
+          },
+          { status: 429 }
+        );
+      }
+
+      const dayRateRow = await env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM cards
+        WHERE channel_id = ?
+          AND created_by_user_id = ?
+          AND created_at >= datetime('now', '-1 day')
+      `)
+        .bind(channelId, createdByUserId)
+        .first();
+
+      const dayCount = Number(dayRateRow?.count || 0);
+
+      if (dayCount >= 100) {
+        return Response.json(
+          {
+            success: false,
+            error: "Daily card creation limit reached for this user.",
+          },
+          { status: 429 }
+        );
+      }
+    }
+
     const inserted = await env.DB.prepare(`
       INSERT INTO cards (
         title,

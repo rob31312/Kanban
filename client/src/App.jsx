@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { initializeDiscord, subscribeToParticipantsUpdate } from './discord';
 
 const STATUS_LABELS = {
@@ -29,6 +29,8 @@ function App() {
     enabled: false,
     message: 'Checking Discord Activity environment...',
   });
+
+  const importInputRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +187,7 @@ function App() {
   }
 
   function makeSystemComment(message) {
-    return `[${formatTimestamp()}] ${currentUserName}: ${message}`;
+    return `[${formatTimestamp()}] [SYSTEM] ${currentUserName}: ${message}`;
   }
 
   function makeUserComment(message) {
@@ -508,8 +510,6 @@ function App() {
           owner: currentUserName || 'Unassigned',
           owner_name: currentUserName || 'Unassigned',
           owner_user_id: currentUserId || '',
-          created_by_name: currentUserName || '',
-          created_by_user_id: currentUserId || '',
           priority: 'Medium',
           comments: [makeSystemComment('Card created')],
           is_approved: false,
@@ -524,6 +524,89 @@ function App() {
       setActiveView('board');
     } catch (err) {
       setError(err.message || 'Failed to create card.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function exportBoard() {
+    try {
+      setSaving(true);
+      setError('');
+
+      const data = await apiFetch(
+        `/api/cards/export?channel_id=${encodeURIComponent(currentChannelId)}`
+      );
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      });
+
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const safeChannel = String(currentChannelId || 'global').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      anchor.href = url;
+      anchor.download = `kanban-board-${safeChannel}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Failed to export board.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function triggerImportPicker() {
+    if (saving) return;
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFileChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) return;
+
+    try {
+      setSaving(true);
+      setError('');
+
+      const rawText = await file.text();
+      const parsed = JSON.parse(rawText);
+      const importedCards = Array.isArray(parsed?.cards) ? parsed.cards : null;
+
+      if (!importedCards) {
+        throw new Error('Import file is missing a cards array.');
+      }
+
+      const confirmed = window.confirm(
+        'Importing will replace all cards on the current board. Continue?'
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      const data = await apiFetch('/api/cards/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          channel_id: currentChannelId,
+          replace: true,
+          cards: importedCards,
+        }),
+      });
+
+      setTasks((data.cards || []).map(mapCardToTask));
+      setSelectedTask(null);
+      setDeleteCandidate(null);
+      setApproveCandidate(null);
+      setResetRequested(false);
+      setActiveView('board');
+    } catch (err) {
+      setError(err.message || 'Failed to import board.');
     } finally {
       setSaving(false);
     }
@@ -633,6 +716,10 @@ function App() {
           <SummaryView
             tasks={tasks}
             onResetBoard={resetCurrentBoard}
+            onExportBoard={exportBoard}
+            onImportBoard={triggerImportPicker}
+            onImportFileChange={handleImportFileChange}
+            importInputRef={importInputRef}
             saving={saving}
           />
         )}
@@ -682,33 +769,35 @@ function App() {
 
 function BoardView({ groupedTasks, onOpenTask, onMoveTask, onRequestApprove, onRequestDelete, saving }) {
   return (
-    <section className="board-grid">
-      {STATUS_ORDER.map((status) => {
-        const tasks = groupedTasks[status] || [];
+    <section className="board-stage">
+      <div className="board-grid">
+        {STATUS_ORDER.map((status) => {
+          const tasks = groupedTasks[status] || [];
 
-        return (
-          <div key={status} className="column">
-            <div className="column-header">
-              <h3>{STATUS_LABELS[status]}</h3>
-              <span>{tasks.length}</span>
-            </div>
+          return (
+            <div key={status} className="column">
+              <div className="column-header">
+                <h3>{STATUS_LABELS[status]}</h3>
+                <span>{tasks.length}</span>
+              </div>
 
-            <div className="card-stack">
-              {tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  onOpenTask={onOpenTask}
-                  onMoveTask={onMoveTask}
-                  onRequestApprove={onRequestApprove}
-                  onRequestDelete={onRequestDelete}
-                  saving={saving}
-                />
-              ))}
+              <div className="card-stack">
+                {tasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onOpenTask={onOpenTask}
+                    onMoveTask={onMoveTask}
+                    onRequestApprove={onRequestApprove}
+                    onRequestDelete={onRequestDelete}
+                    saving={saving}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -835,10 +924,12 @@ function TaskModal({
 }) {
   const [form, setForm] = useState(task);
   const [commentText, setCommentText] = useState('');
+  const [showSystemComments, setShowSystemComments] = useState(true);
 
   useEffect(() => {
     setForm(task);
     setCommentText('');
+    setShowSystemComments(true);
   }, [task]);
 
   const memberOptions = useMemo(() => {
@@ -873,6 +964,15 @@ function TaskModal({
 
     return '';
   }, [form.owner_user_id, form.owner_name]);
+
+  const visibleComments = useMemo(() => {
+    return (form.comments || [])
+      .map((comment, index) => ({
+        comment,
+        index,
+      }))
+      .filter(({ comment }) => showSystemComments || !isSystemComment(comment));
+  }, [form.comments, showSystemComments]);
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -1073,22 +1173,22 @@ function TaskModal({
               Created by: {form.created_by_name || 'Unknown'}
             </p>
 
-            {(form.comments || []).length === 0 ? (
-              <p className="empty-note">No comments yet.</p>
+            <label className="comments-filter">
+              <input
+                type="checkbox"
+                checked={showSystemComments}
+                onChange={(e) => setShowSystemComments(e.target.checked)}
+              />
+              <span>Show system comments</span>
+            </label>
+
+            {visibleComments.length === 0 ? (
+              <p className="empty-note">No visible comments.</p>
             ) : (
-              <div
-                style={{
-                  maxHeight: '180px',
-                  overflowY: 'auto',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '8px',
-                  padding: '8px',
-                  background: 'rgba(0,0,0,0.12)',
-                }}
-              >
+              <div className="comments-list-shell">
                 <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                  {(form.comments || []).map((comment, index) => (
-                    <li key={index} style={{ marginBottom: '8px' }}>
+                  {visibleComments.map(({ comment, index }) => (
+                    <li key={`${index}-${comment}`} style={{ marginBottom: '8px' }}>
                       <div
                         style={{
                           display: 'flex',
@@ -1151,6 +1251,25 @@ function TaskModal({
   );
 }
 
+function isSystemComment(comment) {
+  const text = String(comment || '');
+
+  if (text.includes('[SYSTEM]')) {
+    return true;
+  }
+
+  return [
+    'Card created',
+    'Title changed from "',
+    'Description was updated',
+    'Owner changed from ',
+    'Priority changed from ',
+    'Column changed from ',
+    'Card approved',
+    'Approval removed',
+  ].some((phrase) => text.includes(phrase));
+}
+
 function ApproveConfirmModal({ task, onCancel, onConfirm, saving }) {
   return (
     <div className="modal-backdrop">
@@ -1211,7 +1330,15 @@ function DeleteConfirmModal({ task, onCancel, onConfirm, saving }) {
   );
 }
 
-function SummaryView({ tasks, onResetBoard, saving }) {
+function SummaryView({
+  tasks,
+  onResetBoard,
+  onExportBoard,
+  onImportBoard,
+  onImportFileChange,
+  importInputRef,
+  saving,
+}) {
   const done = tasks.filter((task) => task.status === 'done');
   const active = tasks.filter(
     (task) => task.status === 'inprogress' || task.status === 'testing'
@@ -1241,29 +1368,45 @@ function SummaryView({ tasks, onResetBoard, saving }) {
         />
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '16px',
-          gap: '12px',
-          flexWrap: 'wrap',
-        }}
-      >
+      <div className="summary-toolbar">
         <div>
           <h3 style={{ margin: 0 }}>Team Summary</h3>
           <p style={{ margin: '6px 0 0 0', opacity: 0.8 }}>{APP_VERSION}</p>
         </div>
 
-        <button
-          type="button"
-          className="delete-btn"
-          onClick={onResetBoard}
-          disabled={saving}
-        >
-          {saving ? 'Working...' : 'Reset Current Board'}
-        </button>
+        <div className="summary-toolbar-actions">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={onImportFileChange}
+            style={{ display: 'none' }}
+          />
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={onExportBoard}
+            disabled={saving}
+          >
+            {saving ? 'Working...' : 'Export Board'}
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={onImportBoard}
+            disabled={saving}
+          >
+            {saving ? 'Working...' : 'Import Board'}
+          </button>
+          <button
+            type="button"
+            className="delete-btn"
+            onClick={onResetBoard}
+            disabled={saving}
+          >
+            {saving ? 'Working...' : 'Reset Current Board'}
+          </button>
+        </div>
       </div>
 
       <div

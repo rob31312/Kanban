@@ -25,19 +25,9 @@ export async function onRequestPost(context) {
     const redirectUri =
       env.DISCORD_REDIRECT_URI || body.redirect_uri || DEFAULT_REDIRECT_URI;
 
-    // Temporary debug block
     if (!clientId || !clientSecret || !sessionSecret) {
       return Response.json(
-        {
-          success: false,
-          error: "Missing Discord OAuth configuration.",
-          debug: {
-            hasClientId: Boolean(clientId),
-            hasClientSecret: Boolean(clientSecret),
-            hasSessionSecret: Boolean(sessionSecret),
-            redirectUri,
-          },
-        },
+        { success: false, error: "Missing Discord OAuth configuration." },
         { status: 500 }
       );
     }

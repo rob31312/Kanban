@@ -46,13 +46,46 @@ function App() {
       const resolvedChannelId = state?.channelId || 'global';
       setCurrentChannelId(resolvedChannelId);
 
-      if (state?.participants?.length) {
-        await syncBoardMembers(resolvedChannelId, state.participants);
+      const fallbackParticipants =
+        Array.isArray(state?.participants) && state.participants.length > 0
+          ? state.participants
+          : state?.currentUser
+            ? [
+                {
+                  id: String(state.currentUser.id),
+                  username: state.currentUser.username || '',
+                  global_name: state.currentUser.global_name || '',
+                  avatar: state.currentUser.avatar || '',
+                  display_name: state.displayName || 'User',
+                },
+              ]
+            : [];
+
+      if (fallbackParticipants.length > 0) {
+        await syncBoardMembers(resolvedChannelId, fallbackParticipants);
       }
 
       unsubscribe = subscribeToParticipantsUpdate(async (participants) => {
         if (cancelled) return;
-        await syncBoardMembers(resolvedChannelId, participants);
+
+        const liveParticipants =
+          Array.isArray(participants) && participants.length > 0
+            ? participants
+            : state?.currentUser
+              ? [
+                  {
+                    id: String(state.currentUser.id),
+                    username: state.currentUser.username || '',
+                    global_name: state.currentUser.global_name || '',
+                    avatar: state.currentUser.avatar || '',
+                    display_name: state.displayName || 'User',
+                  },
+                ]
+              : [];
+
+        if (liveParticipants.length > 0) {
+          await syncBoardMembers(resolvedChannelId, liveParticipants);
+        }
       });
     }
 
@@ -803,23 +836,44 @@ function TaskModal({
   }, [task]);
 
   const memberOptions = useMemo(() => {
-    return [...(boardMembers || [])].sort((a, b) => {
+    const base = [...(boardMembers || [])].sort((a, b) => {
       if (a.is_current_participant !== b.is_current_participant) {
         return Number(b.is_current_participant) - Number(a.is_current_participant);
       }
       return (a.display_name || '').localeCompare(b.display_name || '');
     });
-  }, [boardMembers]);
+
+    const hasCurrentUser =
+      currentUserId &&
+      base.some((member) => member.discord_user_id === currentUserId);
+
+    if (!hasCurrentUser && currentUserId) {
+      base.unshift({
+        discord_user_id: currentUserId,
+        display_name: currentUserName || 'User',
+        is_current_participant: true,
+      });
+    }
+
+    return base;
+  }, [boardMembers, currentUserId, currentUserName]);
+
+  const selectValue = useMemo(() => {
+    if (form.owner_user_id) return form.owner_user_id;
+
+    if (form.owner_name && form.owner_name !== 'Unassigned') {
+      return `legacy:${form.owner_name}`;
+    }
+
+    return '';
+  }, [form.owner_user_id, form.owner_name]);
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
   function assignToMe() {
-    const me =
-      memberOptions.find((member) => member.discord_user_id === currentUserId) || null;
-
-    const ownerName = me?.display_name || currentUserName || 'User';
+    const ownerName = currentUserName || 'User';
 
     setForm((current) => ({
       ...current,
@@ -838,14 +892,25 @@ function TaskModal({
     }));
   }
 
-  function handleOwnerChange(userId) {
-    if (!userId) {
+  function handleOwnerChange(value) {
+    if (!value) {
       unassign();
       return;
     }
 
+    if (value.startsWith('legacy:')) {
+      const legacyName = value.replace('legacy:', '');
+      setForm((current) => ({
+        ...current,
+        owner: legacyName,
+        owner_name: legacyName,
+        owner_user_id: '',
+      }));
+      return;
+    }
+
     const selectedMember = memberOptions.find(
-      (member) => member.discord_user_id === userId
+      (member) => member.discord_user_id === value
     );
 
     if (!selectedMember) {
@@ -925,11 +990,20 @@ function TaskModal({
             <label>
               Owner
               <select
-                value={form.owner_user_id || ''}
+                value={selectValue}
                 onChange={(e) => handleOwnerChange(e.target.value)}
                 disabled={saving || form.is_approved}
               >
                 <option value="">Unassigned</option>
+
+                {!form.owner_user_id &&
+                form.owner_name &&
+                form.owner_name !== 'Unassigned' ? (
+                  <option value={`legacy:${form.owner_name}`}>
+                    {form.owner_name} • legacy
+                  </option>
+                ) : null}
+
                 {memberOptions.map((member) => (
                   <option key={member.discord_user_id} value={member.discord_user_id}>
                     {member.display_name}

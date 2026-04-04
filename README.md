@@ -1,3 +1,4 @@
+
 # Kanban Discord Activity
 
 ## Overview
@@ -15,9 +16,9 @@ The app supports a shared board experience inside Discord voice channels. The cu
 
 ### Backend
 - Cloudflare Pages Functions in `client/functions/`
-- Card routes in `client/functions/api/cards/`
-- Discord token exchange route in `client/functions/api/discord/token.js`
+- API routes for cards and Discord token exchange
 - Shared server session helper in `client/functions/_lib/session.js`
+- Card import and export API routes
 
 ### Database
 - Cloudflare D1 database
@@ -53,40 +54,22 @@ Approved cards are visually marked, locked down, and mostly read only.
 
 ## Features
 - Shared board inside Discord Activities
-- Channel scoped persistence using `channel_id`
-- Verified server side write authentication through a signed Discord session cookie
-- Create, update, delete, and reset routes require authenticated server session
-- Per user card creation rate limiting tied to verified Discord user id
+- Channel scoped persistence
 - Approval workflow with pending approval and approved state
 - Audit trail comments with timestamps
 - Automatic comments for field changes, column moves, and approval
 - Owner, priority, comments, and approval state persistence in D1
-- Dynamic board member syncing from Discord participants
-- Assign to me and Unassign owner actions
-- Legacy owner values still supported in the UI
-- Summary view with current board controls
-- Import board from JSON with in app confirmation
-- Export board to JSON through a manual copy modal
-- Board area scrolls inside the main content area instead of scrolling the whole window
-- Comments filter to hide system comments by default
 - Separate production and development Discord apps
 - Cloudflare preview deployment for development testing
-
-## Security and Auth Notes
-The app now performs a minimal server auth pass for write actions.
-
-### Current protections
-- Discord OAuth code exchange is handled on the server
-- the server verifies the Discord user before minting a signed session cookie
-- write routes use the verified server session instead of trusting client submitted actor identity
-- card creation rate limiting is enforced by verified Discord user id
-- Discord client secret is stored as a Cloudflare secret and is never committed to source control
-- session signing uses `DISCORD_SESSION_SECRET`, which must also be stored as a secret and never committed to source control
-
-### Current limitations
-- preview and production still share one remote D1 database
-- delete and reset actions do not write to a separate immutable audit table
-- import trusts the structure of the import file after validation and sanitization, but does not preserve a separate historical import log
+- Verified server side write authentication using a signed Discord session cookie
+- Create, update, delete, and reset routes now require authenticated server session
+- Per user card creation rate limiting tied to verified Discord user id
+- Dynamic board member syncing from Discord participants
+- Assign to me and Unassign owner actions
+- Import board from JSON with in app confirmation
+- Export board through a manual copy JSON modal
+- Board viewport scrolling inside the main content area
+- Comments filter that can hide system comments
 
 ## Local Development
 
@@ -100,7 +83,7 @@ The app now performs a minimal server auth pass for write actions.
 ### Important local note
 Local Pages development uses a local D1 database unless you explicitly work against remote. Keep local and remote schema changes in sync.
 
-### Local secrets
+### Local verified auth secrets
 Create `client/.dev.vars` and add:
 
 ```dotenv
@@ -123,10 +106,14 @@ From the `client/` folder:
 git status
 npm install
 npm run build
-npx wrangler pages dev .\dist --compatibility-date=2026-04-03
+npx wrangler pages dev dist
 ```
 
-Then open the local URL shown in the terminal.
+Then open the local URL shown in the terminal, usually something like:
+
+```text
+http://localhost:8788
+```
 
 ### Useful local API checks
 Check the current board using the default global board:
@@ -150,14 +137,6 @@ View rows:
 npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, channel_id FROM cards ORDER BY id ASC;"
 ```
 
-## Cloudflare Secrets
-The following secrets must exist in any deployed environment that needs authenticated write actions:
-
-- `DISCORD_CLIENT_SECRET`
-- `DISCORD_SESSION_SECRET`
-
-For preview testing, add them to the Preview environment in Cloudflare Pages and redeploy the preview build.
-
 ## How to Use the App in Discord
 
 ### Production use
@@ -178,22 +157,7 @@ For preview testing, add them to the Preview environment in Cloudflare Pages and
 - same channel should show the same board
 - different channels should show different boards
 - approved cards are mostly locked down and intended to be read only
-- export in Discord currently uses a manual copy modal because automatic download is not reliable in the embedded client
-
-## How to Use Import and Export
-
-### Export board
-1. Open the Team Summary view
-2. Click `Export Board`
-3. A modal will open with the board JSON already selected
-4. Copy the JSON and save it manually as a `.json` file
-
-### Import board
-1. Open the Team Summary view
-2. Click `Import Board`
-3. Select a previously exported `.json` file
-4. Confirm the import in the in app modal
-5. The current board will be replaced with the imported cards
+- export in Discord currently uses a manual copy modal because automatic file download is not reliable in the embedded client
 
 ## How to Test the App
 
@@ -201,7 +165,7 @@ For preview testing, add them to the Preview environment in Cloudflare Pages and
 - create a new card
 - edit title, description, owner, and priority
 - add a comment
-- use Assign to me
+- use Assign to me and Unassign
 - move the card through Backlog, In Progress, Testing, and Approval
 - approve the card
 - verify approved card styling and locked state
@@ -220,9 +184,9 @@ For preview testing, add them to the Preview environment in Cloudflare Pages and
 ### Import and export test
 1. Create several cards in a test channel
 2. Export the board
-3. Save the JSON manually
+3. Save the JSON manually as a `.json` file
 4. Reset the board
-5. Import the saved JSON file
+5. Import the saved `.json` file
 6. Confirm all cards return correctly
 
 ### Auth and security test
@@ -344,8 +308,9 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 
 ## Future Improvement Ideas
 - split preview and production into separate D1 databases
+- improve reset flow for channels
+- additional admin safeguards
 - add a separate immutable audit log table
-- stronger admin or moderator safeguards
 - optional direct browser based file export for non Discord use
 
 ## Release Notes
@@ -401,7 +366,6 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 - global only shared board behavior as the primary model
 - Summary tab new card entry point
 - client trusted actor identity for protected write actions
-- automatic export download attempt as the primary Discord export flow
 
 #### Important version 2 note
 - preview and production currently share the same remote D1 database

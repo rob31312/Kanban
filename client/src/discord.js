@@ -113,8 +113,8 @@ export async function initializeDiscord() {
         throw new Error('Authenticate command failed.');
       }
 
-      currentUser = auth.user;
-      displayName = getDisplayName(auth.user);
+      currentUser = normalizeParticipant(auth.user);
+      displayName = currentUser?.display_name || getDisplayName(auth.user);
       authStatus = `authenticated as ${displayName}`;
     } catch (authError) {
       authStatus = authError?.message || String(authError);

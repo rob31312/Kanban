@@ -27,6 +27,7 @@ function App() {
   const [boardMembers, setBoardMembers] = useState([]);
   const [resetRequested, setResetRequested] = useState(false);
   const [exportPackage, setExportPackage] = useState(null);
+  const [pendingImportPackage, setPendingImportPackage] = useState(null);
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
@@ -606,20 +607,36 @@ function App() {
         throw new Error('Import file is missing a cards array.');
       }
 
-      const confirmed = window.confirm(
-        'Importing will replace all cards on the current board. Continue?'
-      );
+      setPendingImportPackage({
+        filename: file.name || 'import.json',
+        cards: importedCards,
+      });
 
-      if (!confirmed) {
-        return;
-      }
+      showNotice(`Import file loaded: ${file.name || 'import.json'}. Confirm to replace the current board.`);
+    } catch (err) {
+      setError(err.message || 'Failed to read import file.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancelImportBoard() {
+    setPendingImportPackage(null);
+  }
+
+  async function confirmImportBoard() {
+    if (!pendingImportPackage) return;
+
+    try {
+      setSaving(true);
+      setError('');
 
       const data = await apiFetch('/api/cards/import', {
         method: 'POST',
         body: JSON.stringify({
           channel_id: currentChannelId,
           replace: true,
-          cards: importedCards,
+          cards: pendingImportPackage.cards,
         }),
       });
 
@@ -628,8 +645,9 @@ function App() {
       setDeleteCandidate(null);
       setApproveCandidate(null);
       setResetRequested(false);
+      setPendingImportPackage(null);
       setActiveView('board');
-      showNotice(`Imported ${data.imported_count || importedCards.length} cards.`);
+      showNotice(`Imported ${data.imported_count || pendingImportPackage.cards.length} cards.`);
     } catch (err) {
       setError(err.message || 'Failed to import board.');
     } finally {
@@ -804,6 +822,16 @@ function App() {
         <ExportBoardModal
           exportPackage={exportPackage}
           onClose={closeExportModal}
+        />
+      )}
+
+      {pendingImportPackage && (
+        <ImportBoardConfirmModal
+          filename={pendingImportPackage.filename}
+          cardCount={pendingImportPackage.cards.length}
+          onCancel={cancelImportBoard}
+          onConfirm={confirmImportBoard}
+          saving={saving}
         />
       )}
     </div>
@@ -1539,7 +1567,7 @@ function ExportBoardModal({ exportPackage, onClose }) {
 
           <p className="empty-note" style={{ marginTop: '-4px' }}>
             Discord blocks automatic export in this environment. Copy the selected JSON from the box
-            below and save it as a <strong>.json</strong> file on your computer.
+            below and save it as a <strong>.json</strong> file.
           </p>
 
           <textarea
@@ -1561,6 +1589,42 @@ function ExportBoardModal({ exportPackage, onClose }) {
                 Done
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImportBoardConfirmModal({ filename, cardCount, onCancel, onConfirm, saving }) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal confirm-modal">
+        <div className="modal-header">
+          <h3>Import Board</h3>
+          <button className="close-btn" onClick={onCancel} disabled={saving}>
+            ×
+          </button>
+        </div>
+
+        <div className="modal-form">
+          <p>
+            Import file: <strong>{filename}</strong>
+          </p>
+          <p>
+            Cards found: <strong>{cardCount}</strong>
+          </p>
+          <p>
+            This will replace all cards on the current board.
+          </p>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel} className="secondary-btn" disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="primary-btn" disabled={saving}>
+              {saving ? 'Importing...' : 'Import Board'}
+            </button>
           </div>
         </div>
       </div>

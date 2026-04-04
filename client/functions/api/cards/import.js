@@ -15,6 +15,14 @@ function normalizeComments(comments) {
     .map((item) => item.slice(0, 1000));
 }
 
+function parseComments(value) {
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return [];
+  }
+}
+
 function mapRow(row) {
   const ownerName = row.owner_name || row.owner || "Unassigned";
 
@@ -29,14 +37,11 @@ function mapRow(row) {
     created_by_name: row.created_by_name || "",
     created_by_user_id: row.created_by_user_id || "",
     priority: row.priority || "Medium",
-    comments: (() => {
-      try {
-        return JSON.parse(row.comments || "[]");
-      } catch {
-        return [];
-      }
-    })(),
+    comments: parseComments(row.comments),
     is_approved: Boolean(row.is_approved),
+    is_rejected: Boolean(row.is_rejected),
+    rejection_reason: row.rejection_reason || "",
+    rejected_at: row.rejected_at || "",
     channel_id: row.channel_id || "global",
     created_at: row.created_at || "",
   };
@@ -61,7 +66,24 @@ function sanitizeImportedCard(card) {
   const createdByName = cleanText(card?.created_by_name, ownerName === "Unassigned" ? "" : ownerName).slice(0, 80);
 
   const comments = normalizeComments(card?.comments);
-  const isApproved = card?.is_approved ? 1 : 0;
+  let isApproved = card?.is_approved ? 1 : 0;
+  let isRejected = card?.is_rejected ? 1 : 0;
+  let rejectionReason = cleanText(card?.rejection_reason).slice(0, 500);
+  let rejectedAt = cleanText(card?.rejected_at) || null;
+
+  if (isApproved) {
+    isRejected = 0;
+    rejectionReason = "";
+    rejectedAt = null;
+  }
+
+  if (!isRejected || status !== "todo") {
+    isRejected = 0;
+    rejectionReason = "";
+    rejectedAt = null;
+  } else if (!rejectedAt) {
+    rejectedAt = new Date().toISOString();
+  }
 
   return {
     title,
@@ -74,6 +96,9 @@ function sanitizeImportedCard(card) {
     priority,
     comments,
     isApproved,
+    isRejected,
+    rejectionReason,
+    rejectedAt,
   };
 }
 
@@ -106,8 +131,6 @@ export async function onRequestPost(context) {
       );
     }
 
-    const sanitizedCards = inputCards.slice(0, 500).map(sanitizeImportedCard);
-
     if (inputCards.length > 500) {
       return Response.json(
         {
@@ -117,6 +140,8 @@ export async function onRequestPost(context) {
         { status: 400 }
       );
     }
+
+    const sanitizedCards = inputCards.slice(0, 500).map(sanitizeImportedCard);
 
     if (replace) {
       await env.DB.prepare(`
@@ -162,9 +187,12 @@ export async function onRequestPost(context) {
             priority,
             comments,
             is_approved,
+            is_rejected,
+            rejection_reason,
+            rejected_at,
             channel_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           card.title,
           card.description,
@@ -177,6 +205,9 @@ export async function onRequestPost(context) {
           card.priority,
           JSON.stringify(card.comments),
           card.isApproved,
+          card.isRejected,
+          card.rejectionReason,
+          card.rejectedAt,
           channelId
         )
       );
@@ -198,6 +229,9 @@ export async function onRequestPost(context) {
         priority,
         comments,
         is_approved,
+        is_rejected,
+        rejection_reason,
+        rejected_at,
         channel_id,
         created_at
       FROM cards

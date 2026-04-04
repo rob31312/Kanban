@@ -11,12 +11,77 @@ const STATUS_LABELS = {
 const STATUS_ORDER = ['todo', 'inprogress', 'testing', 'done'];
 const APP_VERSION = 'Kanban v2.0.0-beta.1';
 
+const PRIORITY_SORT_ORDER = {
+  High: 0,
+  Medium: 1,
+  Low: 2,
+};
+
+const TERMINAL_SORT_ORDER = {
+  approved: 1,
+  rejected: 2,
+};
+
+function getPriorityRank(priority) {
+  return PRIORITY_SORT_ORDER[priority] ?? 99;
+}
+
+function isApprovedTask(task) {
+  return Boolean(task?.is_approved);
+}
+
+function isRejectedTask(task) {
+  return Boolean(task?.is_rejected);
+}
+
+function isLockedTask(task) {
+  return isApprovedTask(task) || isRejectedTask(task);
+}
+
+function getAgeRank(task) {
+  if (task?.created_at) {
+    const parsed = new Date(task.created_at).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const numericId = Number(task?.id);
+  if (Number.isFinite(numericId)) return numericId;
+
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function sortTasksForColumn(tasks) {
+  return [...tasks].sort((a, b) => {
+    const aLocked = isLockedTask(a);
+    const bLocked = isLockedTask(b);
+
+    if (aLocked !== bLocked) {
+      return Number(aLocked) - Number(bLocked);
+    }
+
+    if (!aLocked && !bLocked) {
+      const priorityDiff = getPriorityRank(a.priority) - getPriorityRank(b.priority);
+      if (priorityDiff !== 0) return priorityDiff;
+    }
+
+    if (aLocked && bLocked) {
+      const aTerminal = isApprovedTask(a) ? 'approved' : 'rejected';
+      const bTerminal = isApprovedTask(b) ? 'approved' : 'rejected';
+      const terminalDiff = (TERMINAL_SORT_ORDER[aTerminal] ?? 99) - (TERMINAL_SORT_ORDER[bTerminal] ?? 99);
+      if (terminalDiff !== 0) return terminalDiff;
+    }
+
+    return getAgeRank(a) - getAgeRank(b);
+  });
+}
+
 function App() {
   const [tasks, setTasks] = useState([]);
   const [activeView, setActiveView] = useState('board');
   const [selectedTask, setSelectedTask] = useState(null);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [approveCandidate, setApproveCandidate] = useState(null);
+  const [rejectCandidate, setRejectCandidate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -173,28 +238,32 @@ function App() {
     }
   }
 
-  function mapCardToTask(card) {
-    const ownerName = card.owner_name || card.owner || 'Unassigned';
 
-    return {
-      id: card.id,
-      title: card.title,
-      description: card.description || '',
-      status: card.status,
-      owner: ownerName,
-      owner_name: ownerName,
-      owner_user_id: card.owner_user_id || '',
-      created_by_name: card.created_by_name || '',
-      created_by_user_id: card.created_by_user_id || '',
-      priority: card.priority || 'Medium',
-      comments: Array.isArray(card.comments) ? card.comments : [],
-      is_approved: Boolean(card.is_approved),
-      channel_id: card.channel_id || 'global',
-      created_at: card.created_at || '',
-    };
-  }
+function mapCardToTask(card) {
+  const ownerName = card.owner_name || card.owner || 'Unassigned';
 
-  function formatTimestamp() {
+  return {
+    id: card.id,
+    title: card.title,
+    description: card.description || '',
+    status: card.status,
+    owner: ownerName,
+    owner_name: ownerName,
+    owner_user_id: card.owner_user_id || '',
+    created_by_name: card.created_by_name || '',
+    created_by_user_id: card.created_by_user_id || '',
+    priority: card.priority || 'Medium',
+    comments: Array.isArray(card.comments) ? card.comments : [],
+    is_approved: Boolean(card.is_approved),
+    is_rejected: Boolean(card.is_rejected),
+    rejection_reason: card.rejection_reason || '',
+    rejected_at: card.rejected_at || '',
+    channel_id: card.channel_id || 'global',
+    created_at: card.created_at || '',
+  };
+}
+
+function formatTimestamp() {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -222,53 +291,70 @@ function App() {
     return STATUS_LABELS[status] || status;
   }
 
-  function buildFieldChangeComments(originalTask, updatedTask) {
-    const auditComments = [];
-    const originalOwner = originalTask.owner_name || originalTask.owner || 'Unassigned';
-    const updatedOwner = updatedTask.owner_name || updatedTask.owner || 'Unassigned';
 
-    if (originalTask.title !== updatedTask.title) {
-      auditComments.push(
-        makeSystemComment(`Title changed from "${originalTask.title}" to "${updatedTask.title}"`)
-      );
-    }
+function buildFieldChangeComments(originalTask, updatedTask) {
+  const auditComments = [];
+  const originalOwner = originalTask.owner_name || originalTask.owner || 'Unassigned';
+  const updatedOwner = updatedTask.owner_name || updatedTask.owner || 'Unassigned';
 
-    if (originalTask.description !== updatedTask.description) {
-      auditComments.push(makeSystemComment('Description was updated'));
-    }
-
-    if (originalOwner !== updatedOwner) {
-      auditComments.push(
-        makeSystemComment(`Owner changed from ${originalOwner} to ${updatedOwner}`)
-      );
-    }
-
-    if (originalTask.priority !== updatedTask.priority) {
-      auditComments.push(
-        makeSystemComment(`Priority changed from ${originalTask.priority} to ${updatedTask.priority}`)
-      );
-    }
-
-    if (originalTask.status !== updatedTask.status) {
-      auditComments.push(
-        makeSystemComment(
-          `Column changed from ${getStatusLabel(originalTask.status)} to ${getStatusLabel(updatedTask.status)}`
-        )
-      );
-    }
-
-    if (!originalTask.is_approved && updatedTask.is_approved) {
-      auditComments.push(makeSystemComment('Card approved'));
-    }
-
-    if (originalTask.is_approved && !updatedTask.is_approved) {
-      auditComments.push(makeSystemComment('Approval removed'));
-    }
-
-    return auditComments;
+  if (originalTask.title !== updatedTask.title) {
+    auditComments.push(
+      makeSystemComment(`Title changed from "${originalTask.title}" to "${updatedTask.title}"`)
+    );
   }
 
-  async function loadTasks(channelId) {
+  if (originalTask.description !== updatedTask.description) {
+    auditComments.push(makeSystemComment('Description was updated'));
+  }
+
+  if (originalOwner !== updatedOwner) {
+    auditComments.push(
+      makeSystemComment(`Owner changed from ${originalOwner} to ${updatedOwner}`)
+    );
+  }
+
+  if (originalTask.priority !== updatedTask.priority) {
+    auditComments.push(
+      makeSystemComment(`Priority changed from ${originalTask.priority} to ${updatedTask.priority}`)
+    );
+  }
+
+  if (originalTask.status !== updatedTask.status) {
+    auditComments.push(
+      makeSystemComment(
+        `Column changed from ${getStatusLabel(originalTask.status)} to ${getStatusLabel(updatedTask.status)}`
+      )
+    );
+  }
+
+  if (!originalTask.is_approved && updatedTask.is_approved) {
+    auditComments.push(makeSystemComment('Card approved'));
+  }
+
+  if (originalTask.is_approved && !updatedTask.is_approved) {
+    auditComments.push(makeSystemComment('Approval removed'));
+  }
+
+  if (!originalTask.is_rejected && updatedTask.is_rejected) {
+    auditComments.push(makeSystemComment('Card rejected'));
+  }
+
+  if (originalTask.is_rejected && !updatedTask.is_rejected) {
+    auditComments.push(makeSystemComment('Rejection removed'));
+  }
+
+  if (
+    updatedTask.is_rejected &&
+    originalTask.rejection_reason !== updatedTask.rejection_reason &&
+    updatedTask.rejection_reason
+  ) {
+    auditComments.push(makeSystemComment(`Rejection reason set: ${updatedTask.rejection_reason}`));
+  }
+
+  return auditComments;
+}
+
+async function loadTasks(channelId) {
     try {
       setLoading(true);
       setError('');
@@ -283,7 +369,7 @@ function App() {
 
   const groupedTasks = useMemo(() => {
     return STATUS_ORDER.reduce((acc, status) => {
-      acc[status] = tasks.filter((task) => task.status === status);
+      acc[status] = sortTasksForColumn(tasks.filter((task) => task.status === status));
       return acc;
     }, {});
   }, [tasks]);
@@ -332,6 +418,9 @@ function App() {
           priority: updatedTask.priority || 'Medium',
           comments: finalComments,
           is_approved: updatedTask.is_approved || false,
+          is_rejected: updatedTask.is_rejected || false,
+          rejection_reason: updatedTask.rejection_reason || '',
+          rejected_at: updatedTask.rejected_at || null,
           channel_id: currentChannelId,
         }),
       });
@@ -383,58 +472,62 @@ function App() {
     setDeleteCandidate(null);
   }
 
-  async function moveTask(taskId, direction) {
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task || task.is_approved) return;
 
-    const currentIndex = STATUS_ORDER.indexOf(task.status);
-    const nextIndex = Math.min(
-      STATUS_ORDER.length - 1,
-      Math.max(0, currentIndex + direction)
+async function moveTask(taskId, direction) {
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task || isLockedTask(task)) return;
+
+  const currentIndex = STATUS_ORDER.indexOf(task.status);
+  const nextIndex = Math.min(
+    STATUS_ORDER.length - 1,
+    Math.max(0, currentIndex + direction)
+  );
+
+  if (nextIndex === currentIndex) return;
+
+  const nextStatus = STATUS_ORDER[nextIndex];
+  const finalComments = [
+    ...(task.comments || []),
+    makeSystemComment(`Column changed from ${getStatusLabel(task.status)} to ${getStatusLabel(nextStatus)}`),
+  ];
+
+  try {
+    setSaving(true);
+    setError('');
+
+    const data = await apiFetch(`/api/cards/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        title: task.title,
+        description: task.description || '',
+        status: nextStatus,
+        owner: task.owner_name || 'Unassigned',
+        owner_name: task.owner_name || 'Unassigned',
+        owner_user_id: task.owner_user_id || '',
+        priority: task.priority || 'Medium',
+        comments: finalComments,
+        is_approved: false,
+        is_rejected: false,
+        rejection_reason: '',
+        rejected_at: null,
+        channel_id: currentChannelId,
+      }),
+    });
+
+    const savedTask = mapCardToTask(data.card);
+
+    setTasks((current) =>
+      current.map((item) => (item.id === savedTask.id ? savedTask : item))
     );
-
-    if (nextIndex === currentIndex) return;
-
-    const nextStatus = STATUS_ORDER[nextIndex];
-    const finalComments = [
-      ...(task.comments || []),
-      makeSystemComment(`Column changed from ${getStatusLabel(task.status)} to ${getStatusLabel(nextStatus)}`),
-    ];
-
-    try {
-      setSaving(true);
-      setError('');
-
-      const data = await apiFetch(`/api/cards/${taskId}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          title: task.title,
-          description: task.description || '',
-          status: nextStatus,
-          owner: task.owner_name || 'Unassigned',
-          owner_name: task.owner_name || 'Unassigned',
-          owner_user_id: task.owner_user_id || '',
-          priority: task.priority || 'Medium',
-          comments: finalComments,
-          is_approved: false,
-          channel_id: currentChannelId,
-        }),
-      });
-
-      const savedTask = mapCardToTask(data.card);
-
-      setTasks((current) =>
-        current.map((item) => (item.id === savedTask.id ? savedTask : item))
-      );
-      showNotice(`Card moved to ${getStatusLabel(nextStatus)}.`);
-    } catch (err) {
-      setError(err.message || 'Failed to move card.');
-    } finally {
-      setSaving(false);
-    }
+    showNotice(`Card moved to ${getStatusLabel(nextStatus)}.`);
+  } catch (err) {
+    setError(err.message || 'Failed to move card.');
+  } finally {
+    setSaving(false);
   }
+}
 
-  async function approveTask(taskId) {
+async function approveTask(taskId) {
     const task = tasks.find((item) => item.id === taskId);
     if (!task) return;
     if (task.status !== 'done') return;
@@ -461,6 +554,9 @@ function App() {
           priority: task.priority || 'Medium',
           comments: finalComments,
           is_approved: true,
+          is_rejected: false,
+          rejection_reason: '',
+          rejected_at: null,
           channel_id: currentChannelId,
         }),
       });
@@ -486,14 +582,119 @@ function App() {
     setApproveCandidate(null);
   }
 
-  async function confirmApprove() {
-    if (!approveCandidate) return;
-    await approveTask(approveCandidate.id);
-    setApproveCandidate(null);
-  }
 
-  function resetCurrentBoard() {
-    setResetRequested(true);
+async function confirmApprove() {
+  if (!approveCandidate) return;
+  await approveTask(approveCandidate.id);
+  setApproveCandidate(null);
+}
+
+function requestReject(task) {
+  setRejectCandidate(task);
+}
+
+function cancelReject() {
+  setRejectCandidate(null);
+}
+
+async function rejectTask(taskId, reason) {
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task) return;
+  if (task.status !== 'todo') return;
+  if (isLockedTask(task)) return;
+
+  const trimmedReason = String(reason || '').trim();
+  const finalComments = [
+    ...(task.comments || []),
+    makeSystemComment(trimmedReason ? `Card rejected: ${trimmedReason}` : 'Card rejected'),
+  ];
+
+  try {
+    setSaving(true);
+    setError('');
+
+    const data = await apiFetch(`/api/cards/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        title: task.title,
+        description: task.description || '',
+        status: task.status,
+        owner: task.owner_name || 'Unassigned',
+        owner_name: task.owner_name || 'Unassigned',
+        owner_user_id: task.owner_user_id || '',
+        priority: task.priority || 'Medium',
+        comments: finalComments,
+        is_approved: false,
+        is_rejected: true,
+        rejection_reason: trimmedReason,
+        rejected_at: new Date().toISOString(),
+        channel_id: currentChannelId,
+      }),
+    });
+
+    const savedTask = mapCardToTask(data.card);
+    setTasks((current) =>
+      current.map((item) => (item.id === savedTask.id ? savedTask : item))
+    );
+    showNotice('Card rejected.');
+  } catch (err) {
+    setError(err.message || 'Failed to reject card.');
+  } finally {
+    setSaving(false);
+  }
+}
+
+async function confirmReject(reason) {
+  if (!rejectCandidate) return;
+  await rejectTask(rejectCandidate.id, reason);
+  setRejectCandidate(null);
+}
+
+async function reopenTask(taskId) {
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task || !task.is_rejected) return;
+
+  const finalComments = [
+    ...(task.comments || []),
+    makeSystemComment('Card reopened'),
+  ];
+
+  try {
+    setSaving(true);
+    setError('');
+
+    const data = await apiFetch(`/api/cards/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        title: task.title,
+        description: task.description || '',
+        status: task.status,
+        owner: task.owner_name || 'Unassigned',
+        owner_name: task.owner_name || 'Unassigned',
+        owner_user_id: task.owner_user_id || '',
+        priority: task.priority || 'Medium',
+        comments: finalComments,
+        is_approved: false,
+        is_rejected: false,
+        rejection_reason: '',
+        rejected_at: null,
+        channel_id: currentChannelId,
+      }),
+    });
+
+    const savedTask = mapCardToTask(data.card);
+    setTasks((current) =>
+      current.map((item) => (item.id === savedTask.id ? savedTask : item))
+    );
+    showNotice('Card reopened.');
+  } catch (err) {
+    setError(err.message || 'Failed to reopen card.');
+  } finally {
+    setSaving(false);
+  }
+}
+
+function resetCurrentBoard() {    setResetRequested(true);
   }
 
   function cancelResetBoard() {
@@ -516,6 +717,7 @@ function App() {
       setSelectedTask(null);
       setDeleteCandidate(null);
       setApproveCandidate(null);
+      setRejectCandidate(null);
       setResetRequested(false);
       showNotice('Board reset complete.');
     } catch (err) {
@@ -542,6 +744,9 @@ function App() {
           priority: 'Medium',
           comments: [makeSystemComment('Card created')],
           is_approved: false,
+          is_rejected: false,
+          rejection_reason: '',
+          rejected_at: null,
           channel_id: currentChannelId,
         }),
       });
@@ -644,6 +849,7 @@ function App() {
       setSelectedTask(null);
       setDeleteCandidate(null);
       setApproveCandidate(null);
+      setRejectCandidate(null);
       setResetRequested(false);
       setPendingImportPackage(null);
       setActiveView('board');
@@ -763,6 +969,8 @@ function App() {
             onOpenTask={openTask}
             onMoveTask={moveTask}
             onRequestApprove={requestApprove}
+            onRequestReject={requestReject}
+            onReopenTask={reopenTask}
             onRequestDelete={requestDelete}
             saving={saving}
           />
@@ -788,6 +996,7 @@ function App() {
           onClose={closeTask}
           onSave={saveTask}
           onRequestDelete={requestDelete}
+          onReopenTask={reopenTask}
           saving={saving}
         />
       )}
@@ -797,6 +1006,15 @@ function App() {
           task={approveCandidate}
           onCancel={cancelApprove}
           onConfirm={confirmApprove}
+          saving={saving}
+        />
+      )}
+
+      {rejectCandidate && (
+        <RejectConfirmModal
+          task={rejectCandidate}
+          onCancel={cancelReject}
+          onConfirm={confirmReject}
           saving={saving}
         />
       )}
@@ -838,7 +1056,17 @@ function App() {
   );
 }
 
-function BoardView({ groupedTasks, onOpenTask, onMoveTask, onRequestApprove, onRequestDelete, saving }) {
+
+function BoardView({
+  groupedTasks,
+  onOpenTask,
+  onMoveTask,
+  onRequestApprove,
+  onRequestReject,
+  onReopenTask,
+  onRequestDelete,
+  saving,
+}) {
   return (
     <section className="board-stage">
       <div className="board-grid">
@@ -860,6 +1088,8 @@ function BoardView({ groupedTasks, onOpenTask, onMoveTask, onRequestApprove, onR
                     onOpenTask={onOpenTask}
                     onMoveTask={onMoveTask}
                     onRequestApprove={onRequestApprove}
+                    onRequestReject={onRequestReject}
+                    onReopenTask={onReopenTask}
                     onRequestDelete={onRequestDelete}
                     saving={saving}
                   />
@@ -873,44 +1103,74 @@ function BoardView({ groupedTasks, onOpenTask, onMoveTask, onRequestApprove, onR
   );
 }
 
-function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDelete, saving }) {
+
+function TaskCard({
+  task,
+  onOpenTask,
+  onMoveTask,
+  onRequestApprove,
+  onRequestReject,
+  onReopenTask,
+  onRequestDelete,
+  saving,
+}) {
   const isApprovalColumn = task.status === 'done';
   const isApproved = Boolean(task.is_approved);
+  const isRejected = Boolean(task.is_rejected);
+  const isLocked = isApproved || isRejected;
   const isBacklog = task.status === 'todo';
 
-  return (
-    <article
-      className="task-card"
-      style={
-        isApproved
-          ? {
-              background: '#132a1c',
-              borderColor: '#2f6b45',
-              boxShadow: '0 0 0 1px rgba(77, 163, 104, 0.15) inset',
-            }
-          : undefined
+  const cardStyle = isApproved
+    ? {
+        background: '#132a1c',
+        borderColor: '#2f6b45',
+        boxShadow: '0 0 0 1px rgba(77, 163, 104, 0.15) inset',
       }
-    >
+    : isRejected
+      ? {
+          background: '#2a1b1b',
+          borderColor: '#7b3f3f',
+          boxShadow: '0 0 0 1px rgba(170, 92, 92, 0.15) inset',
+        }
+      : undefined;
+
+  const chipStyle = isApproved
+    ? {
+        background: '#1d4d2f',
+        color: '#d7f5df',
+        border: '1px solid #2f6b45',
+      }
+    : isRejected
+      ? {
+          background: '#5a2b2b',
+          color: '#ffe4e4',
+          border: '1px solid #7b3f3f',
+        }
+      : undefined;
+
+  const titleStyle = isApproved
+    ? { color: '#f3fff6' }
+    : isRejected
+      ? { color: '#fff2f2' }
+      : {};
+
+  const textStyle = isApproved
+    ? { color: '#d7eede' }
+    : isRejected
+      ? { color: '#f0d9d9' }
+      : {};
+
+  return (
+    <article className="task-card" style={cardStyle}>
       <div className="task-card-top" style={{ marginBottom: '10px' }}>
-        <span
-          className="priority-chip"
-          style={
-            isApproved
-              ? {
-                  background: '#1d4d2f',
-                  color: '#d7f5df',
-                  border: '1px solid #2f6b45',
-                }
-              : undefined
-          }
-        >
-          {isApproved ? 'Approved' : task.priority}
+        <span className="priority-chip" style={chipStyle}>
+          {isApproved ? 'Approved' : isRejected ? 'Rejected' : task.priority}
         </span>
       </div>
 
       <h4
         style={{
-          ...(isApproved ? { color: '#f3fff6' } : {}),
+          ...titleStyle,
           marginTop: 0,
           marginBottom: '8px',
           overflowWrap: 'anywhere',
@@ -923,7 +1183,7 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
 
       <p
         style={{
-          ...(isApproved ? { color: '#d7eede' } : {}),
+          ...textStyle,
           overflowWrap: 'anywhere',
           wordBreak: 'break-word',
           whiteSpace: 'pre-wrap',
@@ -936,28 +1196,31 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
         <span>Owner: {task.owner_name || task.owner || 'Unassigned'}</span>
       </div>
 
+      {isRejected && task.rejection_reason ? (
+        <div className="task-meta" style={{ marginTop: '6px' }}>
+          <span>Reason: {task.rejection_reason}</span>
+        </div>
+      ) : null}
+
       <div className="task-actions">
-        {!isBacklog ? (
-          <button
-            onClick={() => onMoveTask(task.id, -1)}
-            disabled={saving || isApproved}
-          >
-            Back
-          </button>
+        {isBacklog ? (
+          isRejected ? (
+            <button onClick={() => onReopenTask(task.id)} disabled={saving}>Reopen</button>
+          ) : (
+            <button onClick={() => onRequestReject(task)} disabled={saving || isLocked}>Reject</button>
+          )
         ) : (
-          <div style={{ width: '64px' }} />
+          <button onClick={() => onMoveTask(task.id, -1)} disabled={saving || isLocked}>Back</button>
         )}
 
         <div className="task-actions-middle">
-          <button onClick={() => onOpenTask(task)} disabled={saving}>
-            Edit
-          </button>
+          <button onClick={() => onOpenTask(task)} disabled={saving}>Edit</button>
           <button
             className="delete-icon-btn"
             onClick={() => onRequestDelete(task)}
             title="Delete card"
             aria-label="Delete card"
-            disabled={saving || isApproved}
+            disabled={saving || isLocked}
           >
             🗑
           </button>
@@ -966,14 +1229,14 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
         {isApprovalColumn ? (
           <button
             onClick={() => onRequestApprove(task)}
-            disabled={saving || isApproved}
+            disabled={saving || isLocked}
           >
             {isApproved ? 'Approved' : 'Approve'}
           </button>
         ) : (
           <button
             onClick={() => onMoveTask(task.id, 1)}
-            disabled={saving || isApproved}
+            disabled={saving || isLocked}
           >
             Forward
           </button>
@@ -983,6 +1246,7 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
   );
 }
 
+
 function TaskModal({
   task,
   boardMembers,
@@ -991,6 +1255,7 @@ function TaskModal({
   onClose,
   onSave,
   onRequestDelete,
+  onReopenTask,
   saving,
 }) {
   const [form, setForm] = useState(task);
@@ -1002,6 +1267,10 @@ function TaskModal({
     setCommentText('');
     setShowSystemComments(false);
   }, [task]);
+
+  const isApproved = Boolean(form.is_approved);
+  const isRejected = Boolean(form.is_rejected);
+  const isLocked = isApproved || isRejected;
 
   const memberOptions = useMemo(() => {
     const base = [...(boardMembers || [])].sort((a, b) => {
@@ -1038,10 +1307,7 @@ function TaskModal({
 
   const visibleComments = useMemo(() => {
     return (form.comments || [])
-      .map((comment, index) => ({
-        comment,
-        index,
-      }))
+      .map((comment, index) => ({ comment, index }))
       .filter(({ comment }) => showSystemComments || !isSystemComment(comment));
   }, [form.comments, showSystemComments]);
 
@@ -1131,6 +1397,11 @@ function TaskModal({
     onRequestDelete(form);
   }
 
+  function handleReopenClick() {
+    onClose();
+    onReopenTask(form.id);
+  }
+
   return (
     <div className="modal-backdrop">
       <div className="modal">
@@ -1142,12 +1413,26 @@ function TaskModal({
         </div>
 
         <form className="modal-form" onSubmit={submit}>
+          {isRejected ? (
+            <div className="discord-panel" style={{ borderColor: '#7b3f3f', marginBottom: '8px' }}>
+              <h3 style={{ marginTop: 0 }}>Rejected</h3>
+              <p>{form.rejection_reason || 'No rejection reason was provided.'}</p>
+            </div>
+          ) : null}
+
+          {isApproved ? (
+            <div className="discord-panel" style={{ borderColor: '#2f6b45', marginBottom: '8px' }}>
+              <h3 style={{ marginTop: 0 }}>Approved</h3>
+              <p>This card is locked because it has already been approved.</p>
+            </div>
+          ) : null}
+
           <label>
             Title
             <input
               value={form.title}
               onChange={(e) => updateField('title', e.target.value)}
-              disabled={saving || form.is_approved}
+              disabled={saving || isLocked}
               maxLength={120}
             />
           </label>
@@ -1158,7 +1443,7 @@ function TaskModal({
               rows="4"
               value={form.description}
               onChange={(e) => updateField('description', e.target.value)}
-              disabled={saving || form.is_approved}
+              disabled={saving || isLocked}
               maxLength={2000}
             />
           </label>
@@ -1169,7 +1454,7 @@ function TaskModal({
               <select
                 value={selectValue}
                 onChange={(e) => handleOwnerChange(e.target.value)}
-                disabled={saving || form.is_approved}
+                disabled={saving || isLocked}
               >
                 <option value="">Unassigned</option>
 
@@ -1195,7 +1480,7 @@ function TaskModal({
               <select
                 value={form.status}
                 onChange={(e) => updateField('status', e.target.value)}
-                disabled={saving || form.is_approved}
+                disabled={saving || isLocked}
               >
                 {STATUS_ORDER.map((status) => (
                   <option key={status} value={status}>
@@ -1211,7 +1496,7 @@ function TaskModal({
               type="button"
               className="secondary-btn"
               onClick={assignToMe}
-              disabled={saving || form.is_approved || !currentUserId}
+              disabled={saving || isLocked || !currentUserId}
             >
               Assign to me
             </button>
@@ -1219,7 +1504,7 @@ function TaskModal({
               type="button"
               className="secondary-btn"
               onClick={unassign}
-              disabled={saving || form.is_approved}
+              disabled={saving || isLocked}
             >
               Unassign
             </button>
@@ -1230,7 +1515,7 @@ function TaskModal({
             <select
               value={form.priority}
               onChange={(e) => updateField('priority', e.target.value)}
-              disabled={saving || form.is_approved}
+              disabled={saving || isLocked}
             >
               <option>High</option>
               <option>Medium</option>
@@ -1274,7 +1559,7 @@ function TaskModal({
                         <button
                           type="button"
                           onClick={() => removeComment(index)}
-                          disabled={saving || form.is_approved}
+                          disabled={saving || isLocked}
                         >
                           Remove
                         </button>
@@ -1290,29 +1575,33 @@ function TaskModal({
                 placeholder="Add a comment"
                 value={commentText}
                 onChange={(e) => setCommentText(e.target.value)}
-                disabled={saving || form.is_approved}
+                disabled={saving || isLocked}
                 maxLength={1000}
               />
-              <button type="button" onClick={addComment} disabled={saving || form.is_approved}>
+              <button type="button" onClick={addComment} disabled={saving || isLocked}>
                 Add
               </button>
             </div>
           </div>
 
           <div className="modal-actions">
-            {!form.is_approved ? (
+            {!isLocked ? (
               <button type="button" onClick={handleDeleteClick} className="delete-btn" disabled={saving}>
                 Delete Card
+              </button>
+            ) : isRejected ? (
+              <button type="button" onClick={handleReopenClick} className="secondary-btn" disabled={saving}>
+                Reopen Card
               </button>
             ) : (
               <div />
             )}
             <div className="action-group">
               <button type="button" onClick={onClose} className="secondary-btn" disabled={saving}>
-                Cancel
+                Close
               </button>
-              <button type="submit" className="primary-btn" disabled={saving || form.is_approved}>
-                {form.is_approved ? 'Approved' : saving ? 'Saving...' : 'Save Card'}
+              <button type="submit" className="primary-btn" disabled={saving || isLocked}>
+                {saving ? 'Saving...' : 'Save Card'}
               </button>
             </div>
           </div>
@@ -1338,6 +1627,10 @@ function isSystemComment(comment) {
     'Column changed from ',
     'Card approved',
     'Approval removed',
+    'Card rejected',
+    'Rejection removed',
+    'Rejection reason set:',
+    'Card reopened',
   ].some((phrase) => text.includes(phrase));
 }
 
@@ -1363,6 +1656,55 @@ function ApproveConfirmModal({ task, onCancel, onConfirm, saving }) {
             </button>
             <button type="button" onClick={onConfirm} className="primary-btn" disabled={saving}>
               {saving ? 'Working...' : 'Approve'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function RejectConfirmModal({ task, onCancel, onConfirm, saving }) {
+  const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    setReason(task?.rejection_reason || '');
+  }, [task]);
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal confirm-modal">
+        <div className="modal-header">
+          <h3>Reject Card</h3>
+          <button className="close-btn" onClick={onCancel} disabled={saving}>
+            ×
+          </button>
+        </div>
+
+        <div className="modal-form">
+          <p>
+            Are you sure you want to reject <strong>{task.title}</strong>?
+          </p>
+
+          <label>
+            Rejection reason
+            <textarea
+              rows="4"
+              value={reason}
+              onChange={(e) => setReason(e.target.value.slice(0, 500))}
+              disabled={saving}
+              maxLength={500}
+              placeholder="Explain why this idea is not being pursued."
+            />
+          </label>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel} className="secondary-btn" disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" onClick={() => onConfirm(reason)} className="delete-btn" disabled={saving}>
+              {saving ? 'Working...' : 'Reject'}
             </button>
           </div>
         </div>
@@ -1410,11 +1752,13 @@ function SummaryView({
   importInputRef,
   saving,
 }) {
-  const done = tasks.filter((task) => task.status === 'done');
-  const active = tasks.filter(
-    (task) => task.status === 'inprogress' || task.status === 'testing'
+  const done = sortTasksForColumn(tasks.filter((task) => task.status === 'done'));
+  const active = sortTasksForColumn(
+    tasks.filter(
+      (task) => !task.is_approved && !task.is_rejected && (task.status === 'inprogress' || task.status === 'testing')
+    )
   );
-  const nextUp = tasks.filter((task) => task.status === 'todo');
+  const nextUp = sortTasksForColumn(tasks.filter((task) => task.status === 'todo'));
 
   return (
     <section className="summary-page">

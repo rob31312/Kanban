@@ -5,6 +5,14 @@ function cleanText(value, fallback = "") {
   return text || fallback;
 }
 
+function parseComments(value) {
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return [];
+  }
+}
+
 function mapRow(row) {
   const ownerName = row.owner_name || row.owner || "Unassigned";
 
@@ -19,14 +27,11 @@ function mapRow(row) {
     created_by_name: row.created_by_name || "",
     created_by_user_id: row.created_by_user_id || "",
     priority: row.priority || "Medium",
-    comments: (() => {
-      try {
-        return JSON.parse(row.comments || "[]");
-      } catch {
-        return [];
-      }
-    })(),
+    comments: parseComments(row.comments),
     is_approved: Boolean(row.is_approved),
+    is_rejected: Boolean(row.is_rejected),
+    rejection_reason: row.rejection_reason || "",
+    rejected_at: row.rejected_at || "",
     channel_id: row.channel_id || "global",
     created_at: row.created_at || "",
   };
@@ -58,6 +63,9 @@ export async function onRequestGet(context) {
         priority,
         comments,
         is_approved,
+        is_rejected,
+        rejection_reason,
+        rejected_at,
         channel_id,
         created_at
       FROM cards
@@ -71,7 +79,7 @@ export async function onRequestGet(context) {
 
     const payload = {
       success: true,
-      export_version: 1,
+      export_version: 2,
       exported_at: new Date().toISOString(),
       channel_id: channelId,
       card_count: cards.length,

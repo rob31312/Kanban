@@ -25,16 +25,19 @@ export async function onRequestPost(context) {
     const redirectUri =
       env.DISCORD_REDIRECT_URI || body.redirect_uri || DEFAULT_REDIRECT_URI;
 
-    if (!clientId || !clientSecret) {
+    // Temporary debug block
+    if (!clientId || !clientSecret || !sessionSecret) {
       return Response.json(
-        { success: false, error: "Missing Discord OAuth configuration." },
-        { status: 500 }
-      );
-    }
-
-    if (!sessionSecret) {
-      return Response.json(
-        { success: false, error: "Missing DISCORD_SESSION_SECRET configuration." },
+        {
+          success: false,
+          error: "Missing Discord OAuth configuration.",
+          debug: {
+            hasClientId: Boolean(clientId),
+            hasClientSecret: Boolean(clientSecret),
+            hasSessionSecret: Boolean(sessionSecret),
+            redirectUri,
+          },
+        },
         { status: 500 }
       );
     }
@@ -70,7 +73,6 @@ export async function onRequestPost(context) {
       );
     }
 
-    // Verify the Discord user on the server so later write routes can trust server-side identity
     const meResponse = await fetch(`${DISCORD_API_BASE}/users/@me`, {
       method: "GET",
       headers: {

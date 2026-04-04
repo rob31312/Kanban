@@ -627,11 +627,9 @@ function App() {
             saving={saving}
           />
         ) : (
-          <SummaryView
-            tasks={tasks}
-            onResetBoard={resetCurrentBoard}
-            saving={saving}
-          />
+          <div className="group2-edge-banner">
+            <img src="/kanban-banner-wide-thin.png" alt="Kanban Activity summary banner" />
+          </div>
         )}
       </main>
 

@@ -9,7 +9,7 @@ const STATUS_LABELS = {
 };
 
 const STATUS_ORDER = ['todo', 'inprogress', 'testing', 'done'];
-const APP_VERSION = 'Kanban v2.0.0-beta.1';
+const APP_VERSION = 'Kanban v2.0.0-beta.2';
 
 const PRIORITY_SORT_ORDER = {
   High: 0,
@@ -22,8 +22,17 @@ const TERMINAL_SORT_ORDER = {
   rejected: 2,
 };
 
+
+function normalizePriority(priority) {
+  const value = String(priority || '').trim().toLowerCase();
+  if (value === 'high') return 'High';
+  if (value === 'medium') return 'Medium';
+  if (value === 'low') return 'Low';
+  return 'Medium';
+}
+
 function getPriorityRank(priority) {
-  return PRIORITY_SORT_ORDER[priority] ?? 99;
+  return PRIORITY_SORT_ORDER[normalizePriority(priority)] ?? 99;
 }
 
 function isApprovedTask(task) {
@@ -415,7 +424,7 @@ async function loadTasks(channelId) {
           owner: updatedTask.owner_name || 'Unassigned',
           owner_name: updatedTask.owner_name || 'Unassigned',
           owner_user_id: updatedTask.owner_user_id || '',
-          priority: updatedTask.priority || 'Medium',
+          priority: normalizePriority(updatedTask.priority),
           comments: finalComments,
           is_approved: updatedTask.is_approved || false,
           is_rejected: updatedTask.is_rejected || false,
@@ -504,7 +513,7 @@ async function moveTask(taskId, direction) {
         owner: task.owner_name || 'Unassigned',
         owner_name: task.owner_name || 'Unassigned',
         owner_user_id: task.owner_user_id || '',
-        priority: task.priority || 'Medium',
+        priority: normalizePriority(task.priority),
         comments: finalComments,
         is_approved: false,
         is_rejected: false,
@@ -551,7 +560,7 @@ async function approveTask(taskId) {
           owner: task.owner_name || 'Unassigned',
           owner_name: task.owner_name || 'Unassigned',
           owner_user_id: task.owner_user_id || '',
-          priority: task.priority || 'Medium',
+          priority: normalizePriority(task.priority),
           comments: finalComments,
           is_approved: true,
           is_rejected: false,
@@ -622,7 +631,7 @@ async function rejectTask(taskId, reason) {
         owner: task.owner_name || 'Unassigned',
         owner_name: task.owner_name || 'Unassigned',
         owner_user_id: task.owner_user_id || '',
-        priority: task.priority || 'Medium',
+        priority: normalizePriority(task.priority),
         comments: finalComments,
         is_approved: false,
         is_rejected: true,
@@ -672,7 +681,7 @@ async function reopenTask(taskId) {
         owner: task.owner_name || 'Unassigned',
         owner_name: task.owner_name || 'Unassigned',
         owner_user_id: task.owner_user_id || '',
-        priority: task.priority || 'Medium',
+        priority: normalizePriority(task.priority),
         comments: finalComments,
         is_approved: false,
         is_rejected: false,

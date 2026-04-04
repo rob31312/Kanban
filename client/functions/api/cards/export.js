@@ -69,19 +69,31 @@ export async function onRequestGet(context) {
 
     const cards = (result.results || []).map(mapRow);
 
-    return Response.json({
+    const payload = {
       success: true,
       export_version: 1,
       exported_at: new Date().toISOString(),
       channel_id: channelId,
       card_count: cards.length,
       cards,
+    };
+
+    const safeChannel = channelId.replace(/[^a-zA-Z0-9_-]/g, "_") || "global";
+    const filename = `kanban-board-${safeChannel}.json`;
+
+    return new Response(JSON.stringify(payload, null, 2), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+      },
     });
   } catch (error) {
     return Response.json(
       {
         success: false,
-        error: error.message || "Failed to export board.",
+        error: error.message || "Failed to export board file.",
       },
       { status: 500 }
     );

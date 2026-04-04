@@ -575,7 +575,7 @@ function App() {
         text: JSON.stringify(data, null, 2),
       });
 
-      showNotice('Board export prepared. Use the modal to download or copy the JSON.');
+      showNotice('Board export prepared. Use Download File, or manually copy the JSON from the modal.');
     } catch (err) {
       setError(err.message || 'Failed to export board.');
     } finally {
@@ -644,32 +644,18 @@ function App() {
   function downloadExportPackage() {
     if (!exportPackage) return;
 
-    const blob = new Blob([exportPackage.text], {
-      type: 'application/json',
-    });
-
-    const url = URL.createObjectURL(blob);
+    const url = `/api/cards/export-file?channel_id=${encodeURIComponent(currentChannelId)}`;
     const anchor = document.createElement('a');
 
     anchor.href = url;
-    anchor.download = exportPackage.filename;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
 
-    showNotice(`Download started for ${exportPackage.filename}.`);
-  }
-
-  async function copyExportPackage() {
-    if (!exportPackage) return;
-
-    try {
-      await navigator.clipboard.writeText(exportPackage.text);
-      showNotice('Board export JSON copied to clipboard.');
-    } catch {
-      setError('Clipboard copy failed. You can still copy the JSON manually from the export modal.');
-    }
+    showNotice('Download requested. If Discord blocks it, manually copy the JSON from the modal.');
   }
 
   return (
@@ -836,7 +822,6 @@ function App() {
           exportPackage={exportPackage}
           onClose={closeExportModal}
           onDownload={downloadExportPackage}
-          onCopy={copyExportPackage}
         />
       )}
     </div>
@@ -1543,7 +1528,18 @@ function ResetBoardConfirmModal({ onCancel, onConfirm, saving }) {
   );
 }
 
-function ExportBoardModal({ exportPackage, onClose, onDownload, onCopy }) {
+function ExportBoardModal({ exportPackage, onClose, onDownload }) {
+  const textAreaRef = useRef(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      textAreaRef.current?.focus();
+      textAreaRef.current?.select();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
     <div className="modal-backdrop">
       <div className="modal" style={{ width: 'min(900px, 100%)' }}>
@@ -1559,7 +1555,13 @@ function ExportBoardModal({ exportPackage, onClose, onDownload, onCopy }) {
             Export file ready: <strong>{exportPackage.filename}</strong>
           </p>
 
+          <p className="empty-note" style={{ marginTop: '-4px' }}>
+            Discord may block automatic downloads. Try Download File first. If no file appears,
+            manually copy the JSON from the box below.
+          </p>
+
           <textarea
+            ref={textAreaRef}
             value={exportPackage.text}
             readOnly
             rows={16}
@@ -1575,9 +1577,6 @@ function ExportBoardModal({ exportPackage, onClose, onDownload, onCopy }) {
               Close
             </button>
             <div className="action-group">
-              <button type="button" onClick={onCopy} className="secondary-btn">
-                Copy JSON
-              </button>
               <button type="button" onClick={onDownload} className="primary-btn">
                 Download File
               </button>

@@ -592,8 +592,11 @@ function App() {
           <div>
             <h2>Kanban Activity</h2>
             <p>Track work items inside your Discord Activity.</p>
-            <p style={{ marginTop: '6px', fontSize: '12px', opacity: 0.75 }}>{APP_VERSION}</p>
+            <p style={{ marginTop: '6px', fontSize: '12px', opacity: 0.75 }}>
+              {APP_VERSION}
+            </p>
           </div>
+
           {activeView === 'board' ? (
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
@@ -627,26 +630,11 @@ function App() {
             saving={saving}
           />
         ) : (
-          <div
-            className="group2-edge-banner"
-            style={{
-              height: '96px',
-              overflow: 'hidden',
-              borderRadius: '12px',
-              marginBottom: '16px',
-            }}
-          >
-            <img
-              src="/kanban-banner-wide-thin.png"
-              alt="Kanban Activity summary banner"
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                display: 'block',
-              }}
-            />
-          </div>
+          <SummaryView
+            tasks={tasks}
+            onResetBoard={resetCurrentBoard}
+            saving={saving}
+          />
         )}
       </main>
 
@@ -770,6 +758,7 @@ function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDel
       >
         {task.title}
       </h4>
+
       <p
         style={{
           ...(isApproved ? { color: '#d7eede' } : {}),
@@ -1232,7 +1221,7 @@ function SummaryView({ tasks, onResetBoard, saving }) {
       <div
         className="group2-edge-banner"
         style={{
-          height: '96px',
+          height: '72px',
           overflow: 'hidden',
           borderRadius: '12px',
           marginBottom: '16px',
@@ -1280,6 +1269,7 @@ function SummaryView({ tasks, onResetBoard, saving }) {
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
           gap: '16px',
+          width: '100%',
         }}
       >
         <SummaryCard
@@ -1337,7 +1327,6 @@ function SummaryCard({ title, subtitle, items }) {
     <div className="standup-card">
       <h3>{title}</h3>
       <p>{subtitle}</p>
-
       {items.length === 0 ? (
         <p className="empty-note">No cards in this section.</p>
       ) : (

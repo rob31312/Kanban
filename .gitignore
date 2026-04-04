@@ -7,3 +7,4 @@ client/.wrangler/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+backfill_owner_name.sql

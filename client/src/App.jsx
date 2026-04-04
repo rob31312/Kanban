@@ -630,7 +630,7 @@ function App() {
           <div
             className="group2-edge-banner"
             style={{
-              height: '72px',
+              height: '96px',
               overflow: 'hidden',
               borderRadius: '12px',
               marginBottom: '16px',
@@ -1232,22 +1232,39 @@ function SummaryView({ tasks, onResetBoard, saving }) {
       <div
         className="group2-edge-banner"
         style={{
+          height: '96px',
+          overflow: 'hidden',
+          borderRadius: '12px',
+          marginBottom: '16px',
+        }}
+      >
+        <img
+          src="/kanban-banner-wide-thin.png"
+          alt="Kanban Activity summary banner"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+          }}
+        />
+      </div>
+
+      <div
+        style={{
           display: 'flex',
-          alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '18px 22px',
+          alignItems: 'center',
+          marginBottom: '16px',
+          gap: '12px',
+          flexWrap: 'wrap',
         }}
       >
         <div>
-          <h3 style={{ margin: 0 }}>Kanban Activity</h3>
-          <p style={{ margin: '6px 0 0 0', opacity: 0.8 }}>
-            Public ready board summary
-          </p>
+          <h3 style={{ margin: 0 }}>Team Summary</h3>
+          <p style={{ margin: '6px 0 0 0', opacity: 0.8 }}>{APP_VERSION}</p>
         </div>
-        <span style={{ fontSize: '12px', opacity: 0.75 }}>{APP_VERSION}</span>
-      </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
         <button
           type="button"
           className="delete-btn"
@@ -1258,11 +1275,29 @@ function SummaryView({ tasks, onResetBoard, saving }) {
         </button>
       </div>
 
-      <section className="standup-layout">
-        <SummaryCard title="Completed" subtitle="What finished recently" items={done} />
-        <SummaryCard title="Active Work" subtitle="What the team is doing now" items={active} />
-        <SummaryCard title="Next Up" subtitle="What should be pulled in next" items={nextUp} />
-      </section>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: '16px',
+        }}
+      >
+        <SummaryCard
+          title="Completed"
+          subtitle="What finished recently"
+          items={done}
+        />
+        <SummaryCard
+          title="Active Work"
+          subtitle="What the team is doing now"
+          items={active}
+        />
+        <SummaryCard
+          title="Next Up"
+          subtitle="What should be pulled in next"
+          items={nextUp}
+        />
+      </div>
     </section>
   );
 }
@@ -1302,6 +1337,7 @@ function SummaryCard({ title, subtitle, items }) {
     <div className="standup-card">
       <h3>{title}</h3>
       <p>{subtitle}</p>
+
       {items.length === 0 ? (
         <p className="empty-note">No cards in this section.</p>
       ) : (

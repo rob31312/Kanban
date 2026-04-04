@@ -20,17 +20,40 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [currentUserName, setCurrentUserName] = useState('User');
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentChannelId, setCurrentChannelId] = useState('global');
   const [boardMembers, setBoardMembers] = useState([]);
   const [resetRequested, setResetRequested] = useState(false);
+  const [exportPackage, setExportPackage] = useState(null);
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
   });
 
   const importInputRef = useRef(null);
+  const noticeTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  function showNotice(message) {
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+    }
+
+    setNotice(message);
+
+    noticeTimerRef.current = setTimeout(() => {
+      setNotice('');
+    }, 5000);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -318,6 +341,7 @@ function App() {
         current.map((task) => (task.id === savedTask.id ? savedTask : task))
       );
       setSelectedTask(null);
+      showNotice('Card saved.');
     } catch (err) {
       setError(err.message || 'Failed to save card.');
     } finally {
@@ -336,6 +360,7 @@ function App() {
 
       setTasks((current) => current.filter((task) => task.id !== taskId));
       setSelectedTask((current) => (current && current.id === taskId ? null : current));
+      showNotice('Card deleted.');
     } catch (err) {
       setError(err.message || 'Failed to delete card.');
     } finally {
@@ -400,6 +425,7 @@ function App() {
       setTasks((current) =>
         current.map((item) => (item.id === savedTask.id ? savedTask : item))
       );
+      showNotice(`Card moved to ${getStatusLabel(nextStatus)}.`);
     } catch (err) {
       setError(err.message || 'Failed to move card.');
     } finally {
@@ -443,6 +469,7 @@ function App() {
       setTasks((current) =>
         current.map((item) => (item.id === savedTask.id ? savedTask : item))
       );
+      showNotice('Card approved.');
     } catch (err) {
       setError(err.message || 'Failed to approve card.');
     } finally {
@@ -489,6 +516,7 @@ function App() {
       setDeleteCandidate(null);
       setApproveCandidate(null);
       setResetRequested(false);
+      showNotice('Board reset complete.');
     } catch (err) {
       setError(err.message || 'Failed to reset board.');
     } finally {
@@ -522,6 +550,7 @@ function App() {
       setTasks((current) => [newTask, ...current]);
       setSelectedTask(newTask);
       setActiveView('board');
+      showNotice('Card created.');
     } catch (err) {
       setError(err.message || 'Failed to create card.');
     } finally {
@@ -538,20 +567,15 @@ function App() {
         `/api/cards/export?channel_id=${encodeURIComponent(currentChannelId)}`
       );
 
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: 'application/json',
+      const safeChannel = String(currentChannelId || 'global').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `kanban-board-${safeChannel}.json`;
+
+      setExportPackage({
+        filename,
+        text: JSON.stringify(data, null, 2),
       });
 
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      const safeChannel = String(currentChannelId || 'global').replace(/[^a-zA-Z0-9_-]/g, '_');
-
-      anchor.href = url;
-      anchor.download = `kanban-board-${safeChannel}.json`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
+      showNotice('Board export prepared. Use the modal to download or copy the JSON.');
     } catch (err) {
       setError(err.message || 'Failed to export board.');
     } finally {
@@ -605,10 +629,46 @@ function App() {
       setApproveCandidate(null);
       setResetRequested(false);
       setActiveView('board');
+      showNotice(`Imported ${data.imported_count || importedCards.length} cards.`);
     } catch (err) {
       setError(err.message || 'Failed to import board.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  function closeExportModal() {
+    setExportPackage(null);
+  }
+
+  function downloadExportPackage() {
+    if (!exportPackage) return;
+
+    const blob = new Blob([exportPackage.text], {
+      type: 'application/json',
+    });
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+
+    anchor.href = url;
+    anchor.download = exportPackage.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    showNotice(`Download started for ${exportPackage.filename}.`);
+  }
+
+  async function copyExportPackage() {
+    if (!exportPackage) return;
+
+    try {
+      await navigator.clipboard.writeText(exportPackage.text);
+      showNotice('Board export JSON copied to clipboard.');
+    } catch {
+      setError('Clipboard copy failed. You can still copy the JSON manually from the export modal.');
     }
   }
 
@@ -661,6 +721,13 @@ function App() {
             <li>Dynamic board members</li>
           </ul>
         </div>
+
+        {notice ? (
+          <div className="discord-panel" style={{ borderColor: '#1d4ed8' }}>
+            <h3>Notice</h3>
+            <p>{notice}</p>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="discord-panel" style={{ borderColor: '#7f1d1d' }}>
@@ -761,6 +828,15 @@ function App() {
           onCancel={cancelDelete}
           onConfirm={confirmDelete}
           saving={saving}
+        />
+      )}
+
+      {exportPackage && (
+        <ExportBoardModal
+          exportPackage={exportPackage}
+          onClose={closeExportModal}
+          onDownload={downloadExportPackage}
+          onCopy={copyExportPackage}
         />
       )}
     </div>
@@ -924,12 +1000,12 @@ function TaskModal({
 }) {
   const [form, setForm] = useState(task);
   const [commentText, setCommentText] = useState('');
-  const [showSystemComments, setShowSystemComments] = useState(true);
+  const [showSystemComments, setShowSystemComments] = useState(false);
 
   useEffect(() => {
     setForm(task);
     setCommentText('');
-    setShowSystemComments(true);
+    setShowSystemComments(false);
   }, [task]);
 
   const memberOptions = useMemo(() => {
@@ -1460,6 +1536,52 @@ function ResetBoardConfirmModal({ onCancel, onConfirm, saving }) {
             <button type="button" onClick={onConfirm} className="delete-btn" disabled={saving}>
               {saving ? 'Working...' : 'Reset Board'}
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExportBoardModal({ exportPackage, onClose, onDownload, onCopy }) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal" style={{ width: 'min(900px, 100%)' }}>
+        <div className="modal-header">
+          <h3>Export Board</h3>
+          <button className="close-btn" onClick={onClose}>
+            ×
+          </button>
+        </div>
+
+        <div className="modal-form">
+          <p>
+            Export file ready: <strong>{exportPackage.filename}</strong>
+          </p>
+
+          <textarea
+            value={exportPackage.text}
+            readOnly
+            rows={16}
+            style={{
+              width: '100%',
+              resize: 'vertical',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            }}
+          />
+
+          <div className="modal-actions">
+            <button type="button" onClick={onClose} className="secondary-btn">
+              Close
+            </button>
+            <div className="action-group">
+              <button type="button" onClick={onCopy} className="secondary-btn">
+                Copy JSON
+              </button>
+              <button type="button" onClick={onDownload} className="primary-btn">
+                Download File
+              </button>
+            </div>
           </div>
         </div>
       </div>

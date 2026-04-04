@@ -50,15 +50,26 @@ The Approval column supports two states:
 - pending approval
 - approved
 
+The Backlog column also supports two states:
+- active backlog item
+- rejected
+
 Approved cards are visually marked, locked down, and mostly read only.
+
+Rejected cards remain in Backlog as a historical record so teams do not reinvent previously rejected ideas. Rejected cards are visually marked, locked down similar to approved cards, and can be reopened later if needed.
 
 ## Features
 - Shared board inside Discord Activities
 - Channel scoped persistence
 - Approval workflow with pending approval and approved state
+- Rejection workflow in Backlog with rejection reason support
 - Audit trail comments with timestamps
 - Automatic comments for field changes, column moves, and approval
-- Owner, priority, comments, and approval state persistence in D1
+- Owner, priority, comments, approval state, and rejection state persistence in D1
+- Priority based card sorting in each column, High first, then Medium, then Low
+- Oldest cards sort first inside the same priority group
+- Approved and rejected cards sort to the bottom of their column
+- Reopen action for rejected cards
 - Separate production and development Discord apps
 - Cloudflare preview deployment for development testing
 - Verified server side write authentication using a signed Discord session cookie
@@ -70,6 +81,7 @@ Approved cards are visually marked, locked down, and mostly read only.
 - Export board through a manual copy JSON modal
 - Board viewport scrolling inside the main content area
 - Comments filter that can hide system comments
+- Import and export includes rejected card fields
 
 ## Local Development
 
@@ -137,6 +149,12 @@ View rows:
 npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, channel_id FROM cards ORDER BY id ASC;"
 ```
 
+View approval and rejection fields:
+
+```bash
+npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, status, priority, is_approved, is_rejected, rejection_reason, rejected_at FROM cards ORDER BY id ASC;"
+```
+
 ## How to Use the App in Discord
 
 ### Production use
@@ -157,6 +175,7 @@ npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, channel_i
 - same channel should show the same board
 - different channels should show different boards
 - approved cards are mostly locked down and intended to be read only
+- rejected cards remain in Backlog, sort to the bottom, and are intended to be historical unless reopened
 - export in Discord currently uses a manual copy modal because automatic file download is not reliable in the embedded client
 
 ## How to Test the App
@@ -169,6 +188,11 @@ npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, channel_i
 - move the card through Backlog, In Progress, Testing, and Approval
 - approve the card
 - verify approved card styling and locked state
+- move a Backlog card backward and confirm it offers Reject instead
+- reject a card, enter a rejection reason, and verify it stays in Backlog as a locked historical card
+- reopen a rejected card and confirm it becomes active again
+- verify sorting in each column, High first, then Medium, then Low, with oldest first inside each priority group
+- verify approved and rejected cards stay at the bottom of their column
 - refresh and confirm persistence
 
 ### Channel persistence test
@@ -303,6 +327,9 @@ This has previously been caused by Discord client issues rather than the app bui
 ### Export does not download a file automatically
 This is expected in the current Discord embedded environment. Use the export modal and manually save the selected JSON to a `.json` file.
 
+### Reject button not visible or sort order looks wrong
+If you expect the Reject workflow or priority sorting and do not see it, verify the newest `client/src/App.jsx` was actually deployed and that the running build is not serving an older cached frontend.
+
 ### Import appears to do nothing
 The current build uses an in app confirmation modal after selecting a file. Confirm the import there.
 
@@ -311,6 +338,7 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 - improve reset flow for channels
 - additional admin safeguards
 - add a separate immutable audit log table
+- optional toggle to hide rejected cards by default
 - optional direct browser based file export for non Discord use
 
 ## Release Notes
@@ -335,6 +363,8 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 - Testing column
 - Approval column with pending approval and approved state
 - Approve action in Approval column
+- Reject action in Backlog with rejection reason support
+- Reopen action for rejected cards
 - audit trail comments with timestamps
 - automatic comments for non comment field changes
 - automatic comments for column moves
@@ -350,17 +380,26 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 - board export to manual copy JSON modal
 - board viewport scrolling inside the main content area
 - system comment filter in the card modal
+- reject action in Backlog with rejection reason support
+- rejected cards stay visible as locked historical cards in Backlog
+- reopen action for rejected cards
+- column sorting by priority with oldest first tie break
+- approved and rejected cards sorted to the bottom of their columns
+- rejected fields included in import and export
 
 #### Changed
 - To Do renamed to Backlog
 - Done replaced with Approval workflow
 - approved cards now use green styling and locked controls
 - Summary tab no longer shows New Card button
-- Back button hidden in Backlog
+- Back button in Backlog replaced by Reject
 - comments box in modal now scrolls instead of expanding indefinitely
 - cards now wrap long title and description text properly
 - title and description lengths limited to prevent overflow
 - system comments are hidden by default in the modal
+- active cards now sort by priority, High then Medium then Low
+- cards inside the same priority group now sort oldest first
+- approved and rejected cards now sort to the bottom of their columns
 
 #### Removed
 - global only shared board behavior as the primary model

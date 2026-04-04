@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { initializeDiscord } from './discord';
-import { owners } from './data';
+import { initializeDiscord, subscribeToParticipantsUpdate } from './discord';
 
 const STATUS_LABELS = {
   todo: 'Backlog',
@@ -10,17 +9,21 @@ const STATUS_LABELS = {
 };
 
 const STATUS_ORDER = ['todo', 'inprogress', 'testing', 'done'];
+const APP_VERSION = 'Kanban v2.0.0-beta.1';
 
 function App() {
   const [tasks, setTasks] = useState([]);
   const [activeView, setActiveView] = useState('board');
   const [selectedTask, setSelectedTask] = useState(null);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [approveCandidate, setApproveCandidate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [currentUserName, setCurrentUserName] = useState('User');
+  const [currentUserId, setCurrentUserId] = useState('');
   const [currentChannelId, setCurrentChannelId] = useState('global');
+  const [boardMembers, setBoardMembers] = useState([]);
   const [resetRequested, setResetRequested] = useState(false);
   const [discordState, setDiscordState] = useState({
     enabled: false,
@@ -29,6 +32,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe = () => {};
 
     async function initDiscord() {
       const state = await initializeDiscord();
@@ -37,27 +41,33 @@ function App() {
 
       setDiscordState(state);
       setCurrentUserName(state?.displayName || 'User');
+      setCurrentUserId(state?.currentUser?.id || '');
 
       const resolvedChannelId = state?.channelId || 'global';
       setCurrentChannelId(resolvedChannelId);
 
-      setTimeout(() => {
-        if (!cancelled) {
-          loadTasks(resolvedChannelId);
-        }
-      }, 800);
+      if (state?.participants?.length) {
+        await syncBoardMembers(resolvedChannelId, state.participants);
+      }
+
+      unsubscribe = subscribeToParticipantsUpdate(async (participants) => {
+        if (cancelled) return;
+        await syncBoardMembers(resolvedChannelId, participants);
+      });
     }
 
     initDiscord();
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
   useEffect(() => {
     if (currentChannelId) {
       loadTasks(currentChannelId);
+      loadBoardMembers(currentChannelId);
     }
   }, [currentChannelId]);
 
@@ -79,13 +89,44 @@ function App() {
     return data;
   }
 
+  async function loadBoardMembers(channelId) {
+    try {
+      const data = await apiFetch(`/api/board-members?channel_id=${encodeURIComponent(channelId)}`);
+      setBoardMembers(Array.isArray(data.members) ? data.members : []);
+    } catch (err) {
+      console.warn('Failed to load board members:', err);
+    }
+  }
+
+  async function syncBoardMembers(channelId, participants) {
+    try {
+      const data = await apiFetch('/api/board-members', {
+        method: 'POST',
+        body: JSON.stringify({
+          channel_id: channelId,
+          participants: Array.isArray(participants) ? participants : [],
+        }),
+      });
+
+      setBoardMembers(Array.isArray(data.members) ? data.members : []);
+    } catch (err) {
+      console.warn('Failed to sync board members:', err);
+    }
+  }
+
   function mapCardToTask(card) {
+    const ownerName = card.owner_name || card.owner || 'Unassigned';
+
     return {
       id: card.id,
       title: card.title,
       description: card.description || '',
       status: card.status,
-      owner: card.owner || 'Unassigned',
+      owner: ownerName,
+      owner_name: ownerName,
+      owner_user_id: card.owner_user_id || '',
+      created_by_name: card.created_by_name || '',
+      created_by_user_id: card.created_by_user_id || '',
       priority: card.priority || 'Medium',
       comments: Array.isArray(card.comments) ? card.comments : [],
       is_approved: Boolean(card.is_approved),
@@ -124,6 +165,8 @@ function App() {
 
   function buildFieldChangeComments(originalTask, updatedTask) {
     const auditComments = [];
+    const originalOwner = originalTask.owner_name || originalTask.owner || 'Unassigned';
+    const updatedOwner = updatedTask.owner_name || updatedTask.owner || 'Unassigned';
 
     if (originalTask.title !== updatedTask.title) {
       auditComments.push(
@@ -135,9 +178,9 @@ function App() {
       auditComments.push(makeSystemComment('Description was updated'));
     }
 
-    if (originalTask.owner !== updatedTask.owner) {
+    if (originalOwner !== updatedOwner) {
       auditComments.push(
-        makeSystemComment(`Owner changed from ${originalTask.owner} to ${updatedTask.owner}`)
+        makeSystemComment(`Owner changed from ${originalOwner} to ${updatedOwner}`)
       );
     }
 
@@ -224,7 +267,9 @@ function App() {
           title: updatedTask.title,
           description: updatedTask.description || '',
           status: updatedTask.status,
-          owner: updatedTask.owner || 'Unassigned',
+          owner: updatedTask.owner_name || 'Unassigned',
+          owner_name: updatedTask.owner_name || 'Unassigned',
+          owner_user_id: updatedTask.owner_user_id || '',
           priority: updatedTask.priority || 'Medium',
           comments: finalComments,
           is_approved: updatedTask.is_approved || false,
@@ -305,7 +350,9 @@ function App() {
           title: task.title,
           description: task.description || '',
           status: nextStatus,
-          owner: task.owner || 'Unassigned',
+          owner: task.owner_name || 'Unassigned',
+          owner_name: task.owner_name || 'Unassigned',
+          owner_user_id: task.owner_user_id || '',
           priority: task.priority || 'Medium',
           comments: finalComments,
           is_approved: false,
@@ -346,7 +393,9 @@ function App() {
           title: task.title,
           description: task.description || '',
           status: task.status,
-          owner: task.owner || 'Unassigned',
+          owner: task.owner_name || 'Unassigned',
+          owner_name: task.owner_name || 'Unassigned',
+          owner_user_id: task.owner_user_id || '',
           priority: task.priority || 'Medium',
           comments: finalComments,
           is_approved: true,
@@ -364,6 +413,20 @@ function App() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function requestApprove(task) {
+    setApproveCandidate(task);
+  }
+
+  function cancelApprove() {
+    setApproveCandidate(null);
+  }
+
+  async function confirmApprove() {
+    if (!approveCandidate) return;
+    await approveTask(approveCandidate.id);
+    setApproveCandidate(null);
   }
 
   function resetCurrentBoard() {
@@ -389,6 +452,7 @@ function App() {
       setTasks([]);
       setSelectedTask(null);
       setDeleteCandidate(null);
+      setApproveCandidate(null);
       setResetRequested(false);
     } catch (err) {
       setError(err.message || 'Failed to reset board.');
@@ -408,7 +472,11 @@ function App() {
           title: 'New Card',
           description: 'Describe the work here.',
           status: 'todo',
-          owner: 'Unassigned',
+          owner: currentUserName || 'Unassigned',
+          owner_name: currentUserName || 'Unassigned',
+          owner_user_id: currentUserId || '',
+          created_by_name: currentUserName || '',
+          created_by_user_id: currentUserId || '',
           priority: 'Medium',
           comments: [makeSystemComment('Card created')],
           is_approved: false,
@@ -434,8 +502,8 @@ function App() {
         <div className="brand">
           <img className="brand-icon" src="/kanban-icon.png" alt="Kanban Board icon" />
           <div>
-            <h1>Kanban Board</h1>
-            <p>Discord Activity starter</p>
+            <h1>Kanban Activity</h1>
+            <p>{APP_VERSION}</p>
           </div>
         </div>
 
@@ -474,6 +542,7 @@ function App() {
             <li>Approval workflow enabled</li>
             <li>Audit trail enabled</li>
             <li>Channel scoped board</li>
+            <li>Dynamic board members</li>
           </ul>
         </div>
 
@@ -488,8 +557,9 @@ function App() {
       <main className="main-content">
         <header className="topbar">
           <div>
-            <h2>Kanban Board</h2>
+            <h2>Kanban Activity</h2>
             <p>Track work items inside your Discord Activity.</p>
+            <p style={{ marginTop: '6px', fontSize: '12px', opacity: 0.75 }}>{APP_VERSION}</p>
           </div>
           {activeView === 'board' ? (
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -519,7 +589,7 @@ function App() {
             groupedTasks={groupedTasks}
             onOpenTask={openTask}
             onMoveTask={moveTask}
-            onApproveTask={approveTask}
+            onRequestApprove={requestApprove}
             onRequestDelete={requestDelete}
             saving={saving}
           />
@@ -535,9 +605,21 @@ function App() {
       {selectedTask && (
         <TaskModal
           task={selectedTask}
+          boardMembers={boardMembers}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
           onClose={closeTask}
           onSave={saveTask}
           onRequestDelete={requestDelete}
+          saving={saving}
+        />
+      )}
+
+      {approveCandidate && (
+        <ApproveConfirmModal
+          task={approveCandidate}
+          onCancel={cancelApprove}
+          onConfirm={confirmApprove}
           saving={saving}
         />
       )}
@@ -562,7 +644,7 @@ function App() {
   );
 }
 
-function BoardView({ groupedTasks, onOpenTask, onMoveTask, onApproveTask, onRequestDelete, saving }) {
+function BoardView({ groupedTasks, onOpenTask, onMoveTask, onRequestApprove, onRequestDelete, saving }) {
   return (
     <section className="board-grid">
       {STATUS_ORDER.map((status) => {
@@ -582,7 +664,7 @@ function BoardView({ groupedTasks, onOpenTask, onMoveTask, onApproveTask, onRequ
                   task={task}
                   onOpenTask={onOpenTask}
                   onMoveTask={onMoveTask}
-                  onApproveTask={onApproveTask}
+                  onRequestApprove={onRequestApprove}
                   onRequestDelete={onRequestDelete}
                   saving={saving}
                 />
@@ -595,7 +677,7 @@ function BoardView({ groupedTasks, onOpenTask, onMoveTask, onApproveTask, onRequ
   );
 }
 
-function TaskCard({ task, onOpenTask, onMoveTask, onApproveTask, onRequestDelete, saving }) {
+function TaskCard({ task, onOpenTask, onMoveTask, onRequestApprove, onRequestDelete, saving }) {
   const isApprovalColumn = task.status === 'done';
   const isApproved = Boolean(task.is_approved);
   const isBacklog = task.status === 'todo';
@@ -652,7 +734,7 @@ function TaskCard({ task, onOpenTask, onMoveTask, onApproveTask, onRequestDelete
       </p>
 
       <div className="task-meta">
-        <span>Owner: {task.owner}</span>
+        <span>Owner: {task.owner_name || task.owner || 'Unassigned'}</span>
       </div>
 
       <div className="task-actions">
@@ -684,7 +766,7 @@ function TaskCard({ task, onOpenTask, onMoveTask, onApproveTask, onRequestDelete
 
         {isApprovalColumn ? (
           <button
-            onClick={() => onApproveTask(task.id)}
+            onClick={() => onRequestApprove(task)}
             disabled={saving || isApproved}
           >
             {isApproved ? 'Approved' : 'Approve'}
@@ -702,7 +784,16 @@ function TaskCard({ task, onOpenTask, onMoveTask, onApproveTask, onRequestDelete
   );
 }
 
-function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
+function TaskModal({
+  task,
+  boardMembers,
+  currentUserId,
+  currentUserName,
+  onClose,
+  onSave,
+  onRequestDelete,
+  saving,
+}) {
   const [form, setForm] = useState(task);
   const [commentText, setCommentText] = useState('');
 
@@ -711,8 +802,63 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
     setCommentText('');
   }, [task]);
 
+  const memberOptions = useMemo(() => {
+    return [...(boardMembers || [])].sort((a, b) => {
+      if (a.is_current_participant !== b.is_current_participant) {
+        return Number(b.is_current_participant) - Number(a.is_current_participant);
+      }
+      return (a.display_name || '').localeCompare(b.display_name || '');
+    });
+  }, [boardMembers]);
+
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function assignToMe() {
+    const me =
+      memberOptions.find((member) => member.discord_user_id === currentUserId) || null;
+
+    const ownerName = me?.display_name || currentUserName || 'User';
+
+    setForm((current) => ({
+      ...current,
+      owner: ownerName,
+      owner_name: ownerName,
+      owner_user_id: currentUserId || '',
+    }));
+  }
+
+  function unassign() {
+    setForm((current) => ({
+      ...current,
+      owner: 'Unassigned',
+      owner_name: 'Unassigned',
+      owner_user_id: '',
+    }));
+  }
+
+  function handleOwnerChange(userId) {
+    if (!userId) {
+      unassign();
+      return;
+    }
+
+    const selectedMember = memberOptions.find(
+      (member) => member.discord_user_id === userId
+    );
+
+    if (!selectedMember) {
+      unassign();
+      return;
+    }
+
+    setForm((current) => ({
+      ...current,
+      owner: selectedMember.display_name,
+      owner_name: selectedMember.display_name,
+      owner_user_id: selectedMember.discord_user_id,
+    }));
   }
 
   function addComment() {
@@ -760,7 +906,7 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
               value={form.title}
               onChange={(e) => updateField('title', e.target.value)}
               disabled={saving || form.is_approved}
-              maxLength={50}
+              maxLength={120}
             />
           </label>
 
@@ -771,7 +917,7 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
               value={form.description}
               onChange={(e) => updateField('description', e.target.value)}
               disabled={saving || form.is_approved}
-              maxLength={500}
+              maxLength={2000}
             />
           </label>
 
@@ -779,18 +925,17 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
             <label>
               Owner
               <select
-                value={form.owner}
-                onChange={(e) => updateField('owner', e.target.value)}
+                value={form.owner_user_id || ''}
+                onChange={(e) => handleOwnerChange(e.target.value)}
                 disabled={saving || form.is_approved}
               >
-                {owners.map((owner) => (
-                  <option key={owner} value={owner}>
-                    {owner}
+                <option value="">Unassigned</option>
+                {memberOptions.map((member) => (
+                  <option key={member.discord_user_id} value={member.discord_user_id}>
+                    {member.display_name}
+                    {member.is_current_participant ? ' • active now' : ''}
                   </option>
                 ))}
-                {!owners.includes('Unassigned') ? (
-                  <option value="Unassigned">Unassigned</option>
-                ) : null}
               </select>
             </label>
 
@@ -810,6 +955,25 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
             </label>
           </div>
 
+          <div style={{ display: 'flex', gap: '8px', marginTop: '-8px', marginBottom: '8px' }}>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={assignToMe}
+              disabled={saving || form.is_approved || !currentUserId}
+            >
+              Assign to me
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={unassign}
+              disabled={saving || form.is_approved}
+            >
+              Unassign
+            </button>
+          </div>
+
           <label>
             Priority
             <select
@@ -825,6 +989,10 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
 
           <div className="comments-panel">
             <h4>Comments</h4>
+            <p className="empty-note" style={{ marginBottom: '10px' }}>
+              Created by: {form.created_by_name || 'Unknown'}
+            </p>
+
             {(form.comments || []).length === 0 ? (
               <p className="empty-note">No comments yet.</p>
             ) : (
@@ -865,12 +1033,14 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
                 </ul>
               </div>
             )}
+
             <div className="comment-entry">
               <input
                 placeholder="Add a comment"
                 value={commentText}
                 onChange={(e) => setCommentText(e.target.value)}
                 disabled={saving || form.is_approved}
+                maxLength={1000}
               />
               <button type="button" onClick={addComment} disabled={saving || form.is_approved}>
                 Add
@@ -896,6 +1066,36 @@ function TaskModal({ task, onClose, onSave, onRequestDelete, saving }) {
             </div>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function ApproveConfirmModal({ task, onCancel, onConfirm, saving }) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal confirm-modal">
+        <div className="modal-header">
+          <h3>Approve Card</h3>
+          <button className="close-btn" onClick={onCancel} disabled={saving}>
+            ×
+          </button>
+        </div>
+
+        <div className="modal-form">
+          <p>
+            Are you sure you want to approve <strong>{task.title}</strong>?
+          </p>
+
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel} className="secondary-btn" disabled={saving}>
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="primary-btn" disabled={saving}>
+              {saving ? 'Working...' : 'Approve'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -940,8 +1140,22 @@ function SummaryView({ tasks, onResetBoard, saving }) {
 
   return (
     <section className="summary-page">
-      <div className="group2-edge-banner">
-        <img src="/group2-banner-wide-thin.png" alt="Group 2 Team Summary banner" />
+      <div
+        className="group2-edge-banner"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '18px 22px',
+        }}
+      >
+        <div>
+          <h3 style={{ margin: 0 }}>Kanban Activity</h3>
+          <p style={{ margin: '6px 0 0 0', opacity: 0.8 }}>
+            Public ready board summary
+          </p>
+        </div>
+        <span style={{ fontSize: '12px', opacity: 0.75 }}>{APP_VERSION}</span>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
@@ -1006,7 +1220,7 @@ function SummaryCard({ title, subtitle, items }) {
           {items.map((task) => (
             <li key={task.id}>
               <strong>{task.title}</strong>
-              <span>{task.owner}</span>
+              <span>{task.owner_name || task.owner || 'Unassigned'}</span>
             </li>
           ))}
         </ul>

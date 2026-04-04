@@ -1,20 +1,62 @@
+function cleanText(value, fallback = "") {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
 function normalizeComments(comments) {
-  if (Array.isArray(comments)) {
-    return comments
-      .map((item) => String(item).trim())
-      .filter(Boolean);
+  if (!Array.isArray(comments)) return [];
+
+  return comments
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, 200);
+}
+
+function validatePayload({
+  title,
+  description,
+  priority,
+  status,
+  comments,
+  channelId,
+  ownerName,
+  createdByName,
+}) {
+  const allowedStatuses = ["todo", "inprogress", "testing", "done"];
+  const allowedPriorities = ["High", "Medium", "Low"];
+
+  if (!title) return "Title is required.";
+  if (!channelId) return "channel_id is required.";
+  if (!allowedStatuses.includes(status)) return "Invalid status.";
+  if (!allowedPriorities.includes(priority)) return "Invalid priority.";
+
+  if (title.length > 120) return "Title must be 120 characters or fewer.";
+  if (description.length > 2000) return "Description must be 2000 characters or fewer.";
+  if (ownerName.length > 80) return "Owner name must be 80 characters or fewer.";
+  if (createdByName.length > 80) return "Creator name must be 80 characters or fewer.";
+
+  for (const comment of comments) {
+    if (comment.length > 1000) {
+      return "Each comment must be 1000 characters or fewer.";
+    }
   }
 
-  return [];
+  return "";
 }
 
 function mapRow(row) {
+  const ownerName = row.owner_name || row.owner || "Unassigned";
+
   return {
     id: row.id,
     title: row.title,
     description: row.description || "",
     status: row.status,
-    owner: row.owner || "Unassigned",
+    owner: ownerName,
+    owner_name: ownerName,
+    owner_user_id: row.owner_user_id || "",
+    created_by_name: row.created_by_name || "",
+    created_by_user_id: row.created_by_user_id || "",
     priority: row.priority || "Medium",
     comments: (() => {
       try {
@@ -31,7 +73,7 @@ function mapRow(row) {
 
 function getChannelIdFromUrl(request) {
   const url = new URL(request.url);
-  return (url.searchParams.get("channel_id") || "global").trim();
+  return cleanText(url.searchParams.get("channel_id"), "global");
 }
 
 export async function onRequestGet(context) {
@@ -40,7 +82,21 @@ export async function onRequestGet(context) {
     const channelId = getChannelIdFromUrl(request);
 
     const result = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, is_approved, channel_id, created_at
+      SELECT
+        id,
+        title,
+        description,
+        status,
+        owner,
+        owner_user_id,
+        owner_name,
+        created_by_user_id,
+        created_by_name,
+        priority,
+        comments,
+        is_approved,
+        channel_id,
+        created_at
       FROM cards
       WHERE channel_id = ?
       ORDER BY id ASC
@@ -68,55 +124,82 @@ export async function onRequestPost(context) {
     const { env, request } = context;
     const body = await request.json();
 
-    const title = (body.title || "").trim();
-    const description = (body.description || "").trim();
-    const status = (body.status || "todo").trim();
-    const owner = (body.owner || "Unassigned").trim();
-    const priority = (body.priority || "Medium").trim();
+    const title = cleanText(body.title);
+    const description = cleanText(body.description);
+    const status = cleanText(body.status, "todo");
+    const priority = cleanText(body.priority, "Medium");
     const comments = normalizeComments(body.comments);
     const isApproved = body.is_approved ? 1 : 0;
-    const channelId = (body.channel_id || "global").trim();
+    const channelId = cleanText(body.channel_id, "global");
 
-    const allowedStatuses = ["todo", "inprogress", "testing", "done"];
-    const allowedPriorities = ["High", "Medium", "Low"];
+    const ownerUserId = cleanText(body.owner_user_id) || null;
+    const ownerName = cleanText(body.owner_name || body.owner, "Unassigned");
+    const createdByUserId = cleanText(body.created_by_user_id) || null;
+    const createdByName = cleanText(body.created_by_name, ownerName === "Unassigned" ? "" : ownerName);
 
-    if (!title) {
+    const validationError = validatePayload({
+      title,
+      description,
+      priority,
+      status,
+      comments,
+      channelId,
+      ownerName,
+      createdByName,
+    });
+
+    if (validationError) {
       return Response.json(
-        { success: false, error: "Title is required." },
+        { success: false, error: validationError },
         { status: 400 }
       );
     }
 
-    if (!channelId) {
+    const countRow = await env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM cards
+      WHERE channel_id = ?
+    `)
+      .bind(channelId)
+      .first();
+
+    const cardCount = Number(countRow?.count || 0);
+    if (cardCount >= 500) {
       return Response.json(
-        { success: false, error: "channel_id is required." },
-        { status: 400 }
+        {
+          success: false,
+          error: "This board has reached the maximum number of cards.",
+        },
+        { status: 429 }
       );
     }
 
-    if (!allowedStatuses.includes(status)) {
-      return Response.json(
-        { success: false, error: "Invalid status." },
-        { status: 400 }
-      );
-    }
-
-    if (!allowedPriorities.includes(priority)) {
-      return Response.json(
-        { success: false, error: "Invalid priority." },
-        { status: 400 }
-      );
-    }
-
-    await env.DB.prepare(`
-      INSERT INTO cards (title, description, status, owner, priority, comments, is_approved, channel_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    const inserted = await env.DB.prepare(`
+      INSERT INTO cards (
+        title,
+        description,
+        status,
+        owner,
+        owner_user_id,
+        owner_name,
+        created_by_user_id,
+        created_by_name,
+        priority,
+        comments,
+        is_approved,
+        channel_id
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .bind(
         title,
         description,
         status,
-        owner || "Unassigned",
+        ownerName,
+        ownerUserId,
+        ownerName,
+        createdByUserId,
+        createdByName,
         priority,
         JSON.stringify(comments),
         isApproved,
@@ -124,14 +207,29 @@ export async function onRequestPost(context) {
       )
       .run();
 
+    const insertedId = inserted?.meta?.last_row_id;
+
     const row = await env.DB.prepare(`
-      SELECT id, title, description, status, owner, priority, comments, is_approved, channel_id, created_at
+      SELECT
+        id,
+        title,
+        description,
+        status,
+        owner,
+        owner_user_id,
+        owner_name,
+        created_by_user_id,
+        created_by_name,
+        priority,
+        comments,
+        is_approved,
+        channel_id,
+        created_at
       FROM cards
-      WHERE channel_id = ?
-      ORDER BY id DESC
+      WHERE id = ? AND channel_id = ?
       LIMIT 1
     `)
-      .bind(channelId)
+      .bind(insertedId, channelId)
       .first();
 
     return Response.json({

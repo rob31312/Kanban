@@ -1,4 +1,4 @@
-import { DiscordSDK } from '@discord/embedded-app-sdk';
+import { DiscordSDK, Events } from '@discord/embedded-app-sdk';
 
 let discordSdk = null;
 
@@ -20,6 +20,20 @@ function getDisplayName(user) {
   return 'User';
 }
 
+function normalizeParticipant(participant) {
+  const source = participant?.user ? participant.user : participant;
+
+  if (!source?.id) return null;
+
+  return {
+    id: String(source.id),
+    username: source.username || '',
+    global_name: source.global_name || '',
+    avatar: source.avatar || '',
+    display_name: getDisplayName(source),
+  };
+}
+
 async function exchangeCodeForToken(code) {
   const response = await fetch('/api/discord/token', {
     method: 'POST',
@@ -38,6 +52,20 @@ async function exchangeCodeForToken(code) {
   return data.access_token;
 }
 
+async function getParticipants() {
+  if (!discordSdk) return [];
+
+  try {
+    const participants = await discordSdk.commands.getInstanceConnectedParticipants();
+    return Array.isArray(participants)
+      ? participants.map(normalizeParticipant).filter(Boolean)
+      : [];
+  } catch (error) {
+    console.warn('Failed to get instance participants:', error);
+    return [];
+  }
+}
+
 export async function initializeDiscord() {
   const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
 
@@ -47,6 +75,8 @@ export async function initializeDiscord() {
       message: 'Discord SDK not initialized because VITE_DISCORD_CLIENT_ID is missing.',
       channelId: 'global',
       displayName: 'User',
+      currentUser: null,
+      participants: [],
       authStatus: 'missing client id',
     };
   }
@@ -56,6 +86,8 @@ export async function initializeDiscord() {
     await discordSdk.ready();
 
     let displayName = 'User';
+    let currentUser = null;
+    let participants = [];
     let authStatus = 'not attempted';
 
     try {
@@ -77,10 +109,11 @@ export async function initializeDiscord() {
         access_token: accessToken,
       });
 
-      if (!auth) {
+      if (!auth?.user) {
         throw new Error('Authenticate command failed.');
       }
 
+      currentUser = auth.user;
       displayName = getDisplayName(auth.user);
       authStatus = `authenticated as ${displayName}`;
     } catch (authError) {
@@ -88,11 +121,15 @@ export async function initializeDiscord() {
       console.warn('Discord user auth failed:', authError);
     }
 
+    participants = await getParticipants();
+
     return {
       enabled: true,
       message: 'Connected to Discord Activity environment.',
       channelId: discordSdk.channelId || 'global',
       displayName,
+      currentUser,
+      participants,
       authStatus,
     };
   } catch (error) {
@@ -102,9 +139,32 @@ export async function initializeDiscord() {
       error,
       channelId: 'global',
       displayName: 'User',
+      currentUser: null,
+      participants: [],
       authStatus: error?.message || String(error),
     };
   }
+}
+
+export function subscribeToParticipantsUpdate(onUpdate) {
+  if (!discordSdk) return () => {};
+
+  const handler = (participants) => {
+    const normalized = Array.isArray(participants)
+      ? participants.map(normalizeParticipant).filter(Boolean)
+      : [];
+    onUpdate(normalized);
+  };
+
+  discordSdk.subscribe(Events.ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE, handler);
+
+  return () => {
+    try {
+      discordSdk.unsubscribe(Events.ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE, handler);
+    } catch (error) {
+      console.warn('Failed to unsubscribe participant listener:', error);
+    }
+  };
 }
 
 export function getDiscordSdk() {

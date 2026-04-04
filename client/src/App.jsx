@@ -575,7 +575,7 @@ function App() {
         text: JSON.stringify(data, null, 2),
       });
 
-      showNotice('Board export prepared. Use Download File, or manually copy the JSON from the modal.');
+      showNotice('Board export prepared. Manually copy the JSON from the modal and save it as a .json file.');
     } catch (err) {
       setError(err.message || 'Failed to export board.');
     } finally {
@@ -639,23 +639,6 @@ function App() {
 
   function closeExportModal() {
     setExportPackage(null);
-  }
-
-  function downloadExportPackage() {
-    if (!exportPackage) return;
-
-    const url = `/api/cards/export-file?channel_id=${encodeURIComponent(currentChannelId)}`;
-    const anchor = document.createElement('a');
-
-    anchor.href = url;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-
-    showNotice('Download requested. If Discord blocks it, manually copy the JSON from the modal.');
   }
 
   return (
@@ -821,7 +804,6 @@ function App() {
         <ExportBoardModal
           exportPackage={exportPackage}
           onClose={closeExportModal}
-          onDownload={downloadExportPackage}
         />
       )}
     </div>
@@ -1528,7 +1510,7 @@ function ResetBoardConfirmModal({ onCancel, onConfirm, saving }) {
   );
 }
 
-function ExportBoardModal({ exportPackage, onClose, onDownload }) {
+function ExportBoardModal({ exportPackage, onClose }) {
   const textAreaRef = useRef(null);
 
   useEffect(() => {
@@ -1556,8 +1538,8 @@ function ExportBoardModal({ exportPackage, onClose, onDownload }) {
           </p>
 
           <p className="empty-note" style={{ marginTop: '-4px' }}>
-            Discord may block automatic downloads. Try Download File first. If no file appears,
-            manually copy the JSON from the box below.
+            Discord blocks automatic export in this environment. Copy the selected JSON from the box
+            below and save it as a <strong>.json</strong> file on your computer.
           </p>
 
           <textarea
@@ -1573,12 +1555,10 @@ function ExportBoardModal({ exportPackage, onClose, onDownload }) {
           />
 
           <div className="modal-actions">
-            <button type="button" onClick={onClose} className="secondary-btn">
-              Close
-            </button>
+            <div />
             <div className="action-group">
-              <button type="button" onClick={onDownload} className="primary-btn">
-                Download File
+              <button type="button" onClick={onClose} className="primary-btn">
+                Done
               </button>
             </div>
           </div>

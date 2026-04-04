@@ -627,8 +627,25 @@ function App() {
             saving={saving}
           />
         ) : (
-          <div className="group2-edge-banner">
-            <img src="/kanban-banner-wide-thin.png" alt="Kanban Activity summary banner" />
+          <div
+            className="group2-edge-banner"
+            style={{
+              height: '72px',
+              overflow: 'hidden',
+              borderRadius: '12px',
+              marginBottom: '16px',
+            }}
+          >
+            <img
+              src="/kanban-banner-wide-thin.png"
+              alt="Kanban Activity summary banner"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                display: 'block',
+              }}
+            />
           </div>
         )}
       </main>

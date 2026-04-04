@@ -1,4 +1,4 @@
-import { requireVerifiedSession } from "../_lib/session.js";
+import { requireVerifiedSession } from "../../_lib/session.js";
 
 export async function onRequestPost(context) {
   try {

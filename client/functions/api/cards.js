@@ -1,3 +1,5 @@
+import { requireVerifiedSession } from "../_lib/session.js";
+
 function cleanText(value, fallback = "") {
   const text = String(value || "").trim();
   return text || fallback;
@@ -122,6 +124,13 @@ export async function onRequestGet(context) {
 export async function onRequestPost(context) {
   try {
     const { env, request } = context;
+
+    const authResult = await requireVerifiedSession(request, env);
+    if (authResult instanceof Response) {
+      return authResult;
+    }
+
+    const session = authResult;
     const body = await request.json();
 
     const title = cleanText(body.title);
@@ -132,10 +141,13 @@ export async function onRequestPost(context) {
     const isApproved = body.is_approved ? 1 : 0;
     const channelId = cleanText(body.channel_id, "global");
 
+    // Owner fields describe the target owner selection, not the acting user.
     const ownerUserId = cleanText(body.owner_user_id) || null;
     const ownerName = cleanText(body.owner_name || body.owner, "Unassigned");
-    const createdByUserId = cleanText(body.created_by_user_id) || null;
-    const createdByName = cleanText(body.created_by_name, ownerName === "Unassigned" ? "" : ownerName);
+
+    // Always derive actor identity from the verified server session.
+    const createdByUserId = session.userId;
+    const createdByName = session.displayName;
 
     const validationError = validatePayload({
       title,
@@ -174,50 +186,48 @@ export async function onRequestPost(context) {
       );
     }
 
-    if (createdByUserId) {
-      const minuteRateRow = await env.DB.prepare(`
-        SELECT COUNT(*) AS count
-        FROM cards
-        WHERE channel_id = ?
-          AND created_by_user_id = ?
-          AND created_at >= datetime('now', '-1 minute')
-      `)
-        .bind(channelId, createdByUserId)
-        .first();
+    const minuteRateRow = await env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM cards
+      WHERE channel_id = ?
+        AND created_by_user_id = ?
+        AND created_at >= datetime('now', '-1 minute')
+    `)
+      .bind(channelId, createdByUserId)
+      .first();
 
-      const minuteCount = Number(minuteRateRow?.count || 0);
+    const minuteCount = Number(minuteRateRow?.count || 0);
 
-      if (minuteCount >= 5) {
-        return Response.json(
-          {
-            success: false,
-            error: "Rate limit reached. Please wait a minute before creating more cards.",
-          },
-          { status: 429 }
-        );
-      }
+    if (minuteCount >= 5) {
+      return Response.json(
+        {
+          success: false,
+          error: "Rate limit reached. Please wait a minute before creating more cards.",
+        },
+        { status: 429 }
+      );
+    }
 
-      const dayRateRow = await env.DB.prepare(`
-        SELECT COUNT(*) AS count
-        FROM cards
-        WHERE channel_id = ?
-          AND created_by_user_id = ?
-          AND created_at >= datetime('now', '-1 day')
-      `)
-        .bind(channelId, createdByUserId)
-        .first();
+    const dayRateRow = await env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM cards
+      WHERE channel_id = ?
+        AND created_by_user_id = ?
+        AND created_at >= datetime('now', '-1 day')
+    `)
+      .bind(channelId, createdByUserId)
+      .first();
 
-      const dayCount = Number(dayRateRow?.count || 0);
+    const dayCount = Number(dayRateRow?.count || 0);
 
-      if (dayCount >= 100) {
-        return Response.json(
-          {
-            success: false,
-            error: "Daily card creation limit reached for this user.",
-          },
-          { status: 429 }
-        );
-      }
+    if (dayCount >= 100) {
+      return Response.json(
+        {
+          success: false,
+          error: "Daily card creation limit reached for this user.",
+        },
+        { status: 429 }
+      );
     }
 
     const inserted = await env.DB.prepare(`

@@ -1,3 +1,5 @@
+import { requireVerifiedSession } from "../../_lib/session.js";
+
 function cleanText(value, fallback = "") {
   const text = String(value || "").trim();
   return text || fallback;
@@ -72,6 +74,12 @@ function mapRow(row) {
 export async function onRequestPut(context) {
   try {
     const { env, request, params } = context;
+
+    const authResult = await requireVerifiedSession(request, env);
+    if (authResult instanceof Response) {
+      return authResult;
+    }
+
     const id = Number(params.id);
     const body = await request.json();
 
@@ -90,6 +98,7 @@ export async function onRequestPut(context) {
     const isApproved = body.is_approved ? 1 : 0;
     const channelId = cleanText(body.channel_id, "global");
 
+    // Owner fields describe the selected target owner, not the acting user.
     const ownerUserId = cleanText(body.owner_user_id) || null;
     const ownerName = cleanText(body.owner_name || body.owner, "Unassigned");
 
@@ -194,6 +203,12 @@ export async function onRequestPut(context) {
 export async function onRequestDelete(context) {
   try {
     const { env, request, params } = context;
+
+    const authResult = await requireVerifiedSession(request, env);
+    if (authResult instanceof Response) {
+      return authResult;
+    }
+
     const id = Number(params.id);
     const url = new URL(request.url);
     const channelId = cleanText(url.searchParams.get("channel_id"), "global");

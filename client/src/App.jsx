@@ -9,7 +9,7 @@ const STATUS_LABELS = {
 };
 
 const STATUS_ORDER = ['todo', 'inprogress', 'testing', 'done'];
-const APP_VERSION = 'Kanban v2.0.0-beta.2';
+const APP_VERSION = 'Kanban v2.0.0-beta.3';
 
 const PRIORITY_SORT_ORDER = {
   High: 0,
@@ -22,6 +22,8 @@ const TERMINAL_SORT_ORDER = {
   rejected: 2,
 };
 
+
+const BOARD_POLL_INTERVAL_MS = 10000;
 
 function normalizePriority(priority) {
   const value = String(priority || '').trim().toLowerCase();
@@ -102,6 +104,7 @@ function App() {
   const [resetRequested, setResetRequested] = useState(false);
   const [exportPackage, setExportPackage] = useState(null);
   const [pendingImportPackage, setPendingImportPackage] = useState(null);
+  const [boardUpdateBanner, setBoardUpdateBanner] = useState('');
   const [discordState, setDiscordState] = useState({
     enabled: false,
     message: 'Checking Discord Activity environment...',
@@ -109,11 +112,16 @@ function App() {
 
   const importInputRef = useRef(null);
   const noticeTimerRef = useRef(null);
+  const boardUpdateTimerRef = useRef(null);
+  const knownBoardVersionRef = useRef(null);
 
   useEffect(() => {
     return () => {
       if (noticeTimerRef.current) {
         clearTimeout(noticeTimerRef.current);
+      }
+      if (boardUpdateTimerRef.current) {
+        clearTimeout(boardUpdateTimerRef.current);
       }
     };
   }, []);
@@ -128,6 +136,49 @@ function App() {
     noticeTimerRef.current = setTimeout(() => {
       setNotice('');
     }, 5000);
+  }
+
+  function showBoardUpdateBanner(message) {
+    if (boardUpdateTimerRef.current) {
+      clearTimeout(boardUpdateTimerRef.current);
+    }
+
+    setBoardUpdateBanner(message);
+
+    boardUpdateTimerRef.current = setTimeout(() => {
+      setBoardUpdateBanner('');
+    }, 4000);
+  }
+
+  function consumeBoardState(boardState, options = {}) {
+    const version = Number(boardState?.version ?? 0);
+    const previousVersion = knownBoardVersionRef.current;
+    const hasChanged =
+      previousVersion !== null &&
+      Number.isFinite(version) &&
+      version !== Number(previousVersion);
+
+    knownBoardVersionRef.current = Number.isFinite(version) ? version : 0;
+
+    if (!hasChanged || options.announce === false) {
+      return { changed: hasChanged, boardState };
+    }
+
+    const updatedByUserId = String(boardState?.updated_by_user_id || '');
+    const updatedByName = String(boardState?.updated_by_name || '').trim() || 'Another user';
+    const lastAction = String(boardState?.last_action || '').trim() || 'updated the board';
+
+    if (updatedByUserId && updatedByUserId === String(currentUserId || '')) {
+      return { changed: hasChanged, boardState };
+    }
+
+    showBoardUpdateBanner(`${updatedByName} just ${lastAction}.`);
+    return { changed: hasChanged, boardState };
+  }
+
+  async function loadBoardState(channelId, options = {}) {
+    const data = await apiFetch(`/api/board-state?channel_id=${encodeURIComponent(channelId)}`);
+    return consumeBoardState(data.board_state, options);
   }
 
   useEffect(() => {
@@ -199,10 +250,40 @@ function App() {
 
   useEffect(() => {
     if (currentChannelId) {
+      knownBoardVersionRef.current = null;
       loadTasks(currentChannelId);
       loadBoardMembers(currentChannelId);
+      loadBoardState(currentChannelId, { announce: false }).catch((err) => {
+        console.warn('Failed to load board state:', err);
+      });
     }
   }, [currentChannelId]);
+
+  useEffect(() => {
+    if (!currentChannelId) return undefined;
+
+    let cancelled = false;
+
+    async function pollBoardState() {
+      try {
+        const result = await loadBoardState(currentChannelId, { announce: true });
+        if (!cancelled && result?.changed) {
+          await loadTasks(currentChannelId, { silent: true });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Board state polling failed:', err);
+        }
+      }
+    }
+
+    const intervalId = setInterval(pollBoardState, BOARD_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentChannelId, currentUserId]);
 
   async function apiFetch(url, options = {}) {
     const response = await fetch(url, {
@@ -363,16 +444,22 @@ function buildFieldChangeComments(originalTask, updatedTask) {
   return auditComments;
 }
 
-async function loadTasks(channelId) {
+async function loadTasks(channelId, options = {}) {
+    const silent = options?.silent === true;
+
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError('');
       const data = await apiFetch(`/api/cards?channel_id=${encodeURIComponent(channelId)}`);
       setTasks((data.cards || []).map(mapCardToTask));
     } catch (err) {
       setError(err.message || 'Failed to load cards.');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }
 
@@ -435,6 +522,7 @@ async function loadTasks(channelId) {
       });
 
       const savedTask = mapCardToTask(data.card);
+      consumeBoardState(data.board_state, { announce: false });
 
       setTasks((current) =>
         current.map((task) => (task.id === savedTask.id ? savedTask : task))
@@ -453,9 +541,10 @@ async function loadTasks(channelId) {
       setSaving(true);
       setError('');
 
-      await apiFetch(`/api/cards/${taskId}?channel_id=${encodeURIComponent(currentChannelId)}`, {
+      const data = await apiFetch(`/api/cards/${taskId}?channel_id=${encodeURIComponent(currentChannelId)}`, {
         method: 'DELETE',
       });
+      consumeBoardState(data.board_state, { announce: false });
 
       setTasks((current) => current.filter((task) => task.id !== taskId));
       setSelectedTask((current) => (current && current.id === taskId ? null : current));
@@ -571,6 +660,7 @@ async function approveTask(taskId) {
       });
 
       const savedTask = mapCardToTask(data.card);
+      consumeBoardState(data.board_state, { announce: false });
 
       setTasks((current) =>
         current.map((item) => (item.id === savedTask.id ? savedTask : item))
@@ -715,12 +805,13 @@ function resetCurrentBoard() {    setResetRequested(true);
       setSaving(true);
       setError('');
 
-      await apiFetch('/api/cards/reset', {
+      const data = await apiFetch('/api/cards/reset', {
         method: 'POST',
         body: JSON.stringify({
           channel_id: currentChannelId,
         }),
       });
+      consumeBoardState(data.board_state, { announce: false });
 
       setTasks([]);
       setSelectedTask(null);
@@ -761,6 +852,7 @@ function resetCurrentBoard() {    setResetRequested(true);
       });
 
       const newTask = mapCardToTask(data.card);
+      consumeBoardState(data.board_state, { announce: false });
 
       setTasks((current) => [newTask, ...current]);
       setSelectedTask(newTask);
@@ -853,6 +945,7 @@ function resetCurrentBoard() {    setResetRequested(true);
           cards: pendingImportPackage.cards,
         }),
       });
+      consumeBoardState(data.board_state, { announce: false });
 
       setTasks((data.cards || []).map(mapCardToTask));
       setSelectedTask(null);
@@ -964,6 +1057,20 @@ function resetCurrentBoard() {    setResetRequested(true);
             </div>
           ) : null}
         </header>
+
+        {boardUpdateBanner ? (
+          <div
+            className="discord-panel"
+            style={{
+              borderColor: '#0f766e',
+              background: 'rgba(15, 118, 110, 0.12)',
+              marginBottom: '16px',
+            }}
+          >
+            <h3>Board Update</h3>
+            <p>{boardUpdateBanner}</p>
+          </div>
+        ) : null}
 
         {loading ? (
           <section className="summary-page">

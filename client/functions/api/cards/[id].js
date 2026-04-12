@@ -11,8 +11,70 @@ function normalizeComments(comments) {
   return comments
     .map((item) => String(item).trim())
     .filter(Boolean)
-    .slice(0, 200)
-    .map((item) => item.slice(0, 1000));
+    .slice(0, 200);
+}
+
+function normalizeNullableText(value, fallback = "") {
+  const text = cleanText(value, fallback);
+  return text || null;
+}
+
+function mapBoardStateRow(row, boardId = "global") {
+  return {
+    board_id: row?.board_id || boardId,
+    version: Number(row?.version || 0),
+    updated_at: row?.updated_at || "",
+    updated_by_user_id: row?.updated_by_user_id || "",
+    updated_by_name: row?.updated_by_name || "",
+    last_action: row?.last_action || "",
+  };
+}
+
+async function touchBoardState(env, boardId, userId, userName, lastAction = "updated the board") {
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO board_state (
+      board_id,
+      version,
+      updated_at,
+      updated_by_user_id,
+      updated_by_name,
+      last_action
+    )
+    VALUES (?, 1, ?, ?, ?, ?)
+    ON CONFLICT(board_id) DO UPDATE SET
+      version = board_state.version + 1,
+      updated_at = excluded.updated_at,
+      updated_by_user_id = excluded.updated_by_user_id,
+      updated_by_name = excluded.updated_by_name,
+      last_action = excluded.last_action
+  `)
+    .bind(
+      boardId,
+      now,
+      userId || null,
+      userName || "",
+      lastAction || "updated the board"
+    )
+    .run();
+
+  const row = await env.DB.prepare(`
+    SELECT
+      board_id,
+      version,
+      updated_at,
+      updated_by_user_id,
+      updated_by_name,
+      last_action
+    FROM board_state
+    WHERE board_id = ?
+    LIMIT 1
+  `)
+    .bind(boardId)
+    .first();
+
+  return mapBoardStateRow(row, boardId);
 }
 
 function validatePayload({
@@ -24,8 +86,6 @@ function validatePayload({
   channelId,
   ownerName,
   rejectionReason,
-  isApproved,
-  isRejected,
 }) {
   const allowedStatuses = ["todo", "inprogress", "testing", "done"];
   const allowedPriorities = ["High", "Medium", "Low"];
@@ -34,8 +94,6 @@ function validatePayload({
   if (!channelId) return "channel_id is required.";
   if (!allowedStatuses.includes(status)) return "Invalid status.";
   if (!allowedPriorities.includes(priority)) return "Invalid priority.";
-  if (isApproved && status !== "done") return "Approved cards must be in the Approval column.";
-  if (isRejected && status !== "todo") return "Rejected cards must remain in Backlog.";
 
   if (title.length > 120) return "Title must be 120 characters or fewer.";
   if (description.length > 2000) return "Description must be 2000 characters or fewer.";
@@ -49,14 +107,6 @@ function validatePayload({
   }
 
   return "";
-}
-
-function parseComments(value) {
-  try {
-    return JSON.parse(value || "[]");
-  } catch {
-    return [];
-  }
 }
 
 function mapRow(row) {
@@ -73,7 +123,13 @@ function mapRow(row) {
     created_by_name: row.created_by_name || "",
     created_by_user_id: row.created_by_user_id || "",
     priority: row.priority || "Medium",
-    comments: parseComments(row.comments),
+    comments: (() => {
+      try {
+        return JSON.parse(row.comments || "[]");
+      } catch {
+        return [];
+      }
+    })(),
     is_approved: Boolean(row.is_approved),
     is_rejected: Boolean(row.is_rejected),
     rejection_reason: row.rejection_reason || "",
@@ -81,6 +137,16 @@ function mapRow(row) {
     channel_id: row.channel_id || "global",
     created_at: row.created_at,
   };
+}
+
+function determineUpdateAction(existingRow, nextValues) {
+  if (!existingRow) return "updated the board";
+
+  if (!existingRow.is_approved && nextValues.isApproved) return "approved a card";
+  if (!existingRow.is_rejected && nextValues.isRejected) return "rejected a card";
+  if (existingRow.is_rejected && !nextValues.isRejected) return "reopened a card";
+  if (existingRow.status !== nextValues.status) return "updated the board";
+  return "updated the board";
 }
 
 export async function onRequestPut(context) {
@@ -92,6 +158,7 @@ export async function onRequestPut(context) {
       return authResult;
     }
 
+    const session = authResult;
     const id = Number(params.id);
     const body = await request.json();
 
@@ -107,27 +174,13 @@ export async function onRequestPut(context) {
     const status = cleanText(body.status);
     const priority = cleanText(body.priority, "Medium");
     const comments = normalizeComments(body.comments);
+    const isApproved = body.is_approved ? 1 : 0;
+    const isRejected = body.is_rejected ? 1 : 0;
+    const rejectionReason = cleanText(body.rejection_reason).slice(0, 500);
+    const rejectedAt = body.rejected_at ? cleanText(body.rejected_at) : null;
     const channelId = cleanText(body.channel_id, "global");
 
-    let isApproved = body.is_approved ? 1 : 0;
-    let isRejected = body.is_rejected ? 1 : 0;
-    let rejectionReason = cleanText(body.rejection_reason).slice(0, 500);
-    let rejectedAt = cleanText(body.rejected_at) || null;
-
-    if (isApproved) {
-      isRejected = 0;
-      rejectionReason = "";
-      rejectedAt = null;
-    }
-
-    if (!isRejected) {
-      rejectionReason = "";
-      rejectedAt = null;
-    } else if (!rejectedAt) {
-      rejectedAt = new Date().toISOString();
-    }
-
-    const ownerUserId = cleanText(body.owner_user_id) || null;
+    const ownerUserId = normalizeNullableText(body.owner_user_id);
     const ownerName = cleanText(body.owner_name || body.owner, "Unassigned");
 
     const validationError = validatePayload({
@@ -139,8 +192,6 @@ export async function onRequestPut(context) {
       channelId,
       ownerName,
       rejectionReason,
-      isApproved,
-      isRejected,
     });
 
     if (validationError) {
@@ -151,7 +202,11 @@ export async function onRequestPut(context) {
     }
 
     const existing = await env.DB.prepare(`
-      SELECT id
+      SELECT
+        id,
+        status,
+        is_approved,
+        is_rejected
       FROM cards
       WHERE id = ? AND channel_id = ?
     `)
@@ -225,9 +280,18 @@ export async function onRequestPut(context) {
       .bind(id, channelId)
       .first();
 
+    const boardState = await touchBoardState(
+      env,
+      channelId,
+      session.userId,
+      session.displayName,
+      determineUpdateAction(existing, { status, isApproved, isRejected })
+    );
+
     return Response.json({
       success: true,
       card: mapRow(updated),
+      board_state: boardState,
     });
   } catch (error) {
     return Response.json(
@@ -249,6 +313,7 @@ export async function onRequestDelete(context) {
       return authResult;
     }
 
+    const session = authResult;
     const id = Number(params.id);
     const url = new URL(request.url);
     const channelId = cleanText(url.searchParams.get("channel_id"), "global");
@@ -282,7 +347,18 @@ export async function onRequestDelete(context) {
       .bind(id, channelId)
       .run();
 
-    return Response.json({ success: true });
+    const boardState = await touchBoardState(
+      env,
+      channelId,
+      session.userId,
+      session.displayName,
+      "deleted a card"
+    );
+
+    return Response.json({
+      success: true,
+      board_state: boardState,
+    });
   } catch (error) {
     return Response.json(
       {

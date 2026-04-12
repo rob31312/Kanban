@@ -81,6 +81,15 @@ Rejected cards remain in Backlog as a historical record so teams do not reinvent
 - Export board through a manual copy JSON modal
 - Board viewport scrolling inside the main content area
 - Comments filter that can hide system comments
+- Reject workflow for Backlog cards
+- Reopen action for rejected cards
+- Priority based column sorting with High, Medium, and Low active cards first
+- Secondary sort by age with oldest cards first inside each priority group
+- Approved and rejected terminal cards sorted to the bottom of their column
+- Rejected state persistence in D1
+- Board version polling for shared refresh detection
+- Temporary board update banner showing which user changed the board
+- Lightweight board state route and D1 table for auto refresh coordination
 - Import and export includes rejected card fields
 
 ## Local Development
@@ -147,6 +156,19 @@ View rows:
 
 ```bash
 npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, channel_id FROM cards ORDER BY id ASC;"
+```
+
+Check rejection columns and board sync table:
+
+```bash
+npx wrangler d1 execute discord-kanban-db --command "PRAGMA table_info(cards);"
+npx wrangler d1 execute discord-kanban-db --command "SELECT sql FROM sqlite_master WHERE type='table' AND name='board_state';"
+```
+
+Create the board sync table remotely if needed:
+
+```bash
+npx wrangler d1 execute discord-kanban-db --remote --command "CREATE TABLE IF NOT EXISTS board_state (board_id TEXT PRIMARY KEY, version INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by_user_id TEXT, updated_by_name TEXT, last_action TEXT NOT NULL DEFAULT '');"
 ```
 
 View approval and rejection fields:
@@ -222,6 +244,13 @@ npx wrangler d1 execute discord-kanban-db --command "SELECT id, title, status, p
 - confirm these actions work only when authenticated
 - confirm rate limiting still applies for repeated card creation
 
+### Board sync test
+1. Open the same channel board with two users
+2. Make a card change with user A
+3. Wait for the polling interval or observe the board update banner
+4. Confirm user B sees the board refresh automatically without clicking Refresh Board
+5. Confirm the banner shows which user updated the board
+
 ## Deployment Model
 
 ### Production
@@ -269,6 +298,7 @@ Use the latest preview deployment URL to verify the update in a normal browser.
 - use the development Discord app
 - point it at the preview build
 - test in a dedicated test voice channel
+- for beta.3 and later, also verify board sync polling and the temporary update banner
 
 ## How to Get the Current Preview URL
 1. Open Cloudflare
@@ -302,6 +332,7 @@ After updating `wrangler.toml`, commit and push so Cloudflare preview rebuilds w
 - D1 bindings are not inherited into preview automatically and must be repeated under `env.preview.d1_databases`
 - Discord client secrets should be stored as Cloudflare Secrets, not committed to source control
 - `DISCORD_SESSION_SECRET` should also be stored as a Cloudflare Secret, not committed to source control
+- board sync polling in beta.3 depends on the `board_state` table existing in D1 and the `board-state` route being deployed
 
 ## Discord Notes
 - production and development should use separate Discord apps
@@ -309,11 +340,15 @@ After updating `wrangler.toml`, commit and push so Cloudflare preview rebuilds w
 - production app should stay pointed to production
 - if Discord behaves strangely during testing, fully restarting or reinstalling Discord may help
 - Discord may block automatic file download or clipboard APIs inside the embedded Activity
+- board sync in beta.3 uses periodic polling rather than websocket push, which reduces risk inside the embedded Discord environment
 
 ## Known Behaviors and Troubleshooting
 
 ### Cards do not appear immediately
 Use the `Refresh Board` button. The app also performs an automatic delayed reload after Discord initialization.
+
+### Other user's update did not appear yet
+Beta.3 adds automatic board polling, but updates may still appear on the next polling cycle rather than instantly. Use `Refresh Board` if needed during testing.
 
 ### Card says not found in this channel
 This usually means older cards were created before channel scoping or under a different `channel_id`.
@@ -340,6 +375,7 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 - add a separate immutable audit log table
 - optional toggle to hide rejected cards by default
 - optional direct browser based file export for non Discord use
+- replace polling with websocket or other real time push if project scope allows
 
 ## Release Notes
 
@@ -409,6 +445,12 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 #### Important version 2 note
 - preview and production currently share the same remote D1 database
 - use the development Discord app only in dedicated test channels
+
+### Version 2 Beta 3 Notes
+- `Kanban v2.0.0-beta.3` adds lightweight board synchronization using polling
+- all users in the same channel should receive automatic board refresh on the next polling cycle after a write action
+- the temporary update banner should identify the user who made the latest detected change
+- this version depends on the `board_state` table and the `board-state` API route being deployed together
 
 ## Maintainer Notes
 If future you forget the setup order, do this:

@@ -15,12 +15,62 @@ function normalizeComments(comments) {
     .map((item) => item.slice(0, 1000));
 }
 
-function parseComments(value) {
-  try {
-    return JSON.parse(value || "[]");
-  } catch {
-    return [];
-  }
+function mapBoardStateRow(row, boardId = "global") {
+  return {
+    board_id: row?.board_id || boardId,
+    version: Number(row?.version || 0),
+    updated_at: row?.updated_at || "",
+    updated_by_user_id: row?.updated_by_user_id || "",
+    updated_by_name: row?.updated_by_name || "",
+    last_action: row?.last_action || "",
+  };
+}
+
+async function touchBoardState(env, boardId, userId, userName, lastAction = "updated the board") {
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO board_state (
+      board_id,
+      version,
+      updated_at,
+      updated_by_user_id,
+      updated_by_name,
+      last_action
+    )
+    VALUES (?, 1, ?, ?, ?, ?)
+    ON CONFLICT(board_id) DO UPDATE SET
+      version = board_state.version + 1,
+      updated_at = excluded.updated_at,
+      updated_by_user_id = excluded.updated_by_user_id,
+      updated_by_name = excluded.updated_by_name,
+      last_action = excluded.last_action
+  `)
+    .bind(
+      boardId,
+      now,
+      userId || null,
+      userName || "",
+      lastAction || "updated the board"
+    )
+    .run();
+
+  const row = await env.DB.prepare(`
+    SELECT
+      board_id,
+      version,
+      updated_at,
+      updated_by_user_id,
+      updated_by_name,
+      last_action
+    FROM board_state
+    WHERE board_id = ?
+    LIMIT 1
+  `)
+    .bind(boardId)
+    .first();
+
+  return mapBoardStateRow(row, boardId);
 }
 
 function mapRow(row) {
@@ -37,7 +87,13 @@ function mapRow(row) {
     created_by_name: row.created_by_name || "",
     created_by_user_id: row.created_by_user_id || "",
     priority: row.priority || "Medium",
-    comments: parseComments(row.comments),
+    comments: (() => {
+      try {
+        return JSON.parse(row.comments || "[]");
+      } catch {
+        return [];
+      }
+    })(),
     is_approved: Boolean(row.is_approved),
     is_rejected: Boolean(row.is_rejected),
     rejection_reason: row.rejection_reason || "",
@@ -63,27 +119,16 @@ function sanitizeImportedCard(card) {
   const ownerName = cleanText(card?.owner_name || card?.owner, "Unassigned").slice(0, 80);
 
   const createdByUserId = cleanText(card?.created_by_user_id) || null;
-  const createdByName = cleanText(card?.created_by_name, ownerName === "Unassigned" ? "" : ownerName).slice(0, 80);
+  const createdByName = cleanText(
+    card?.created_by_name,
+    ownerName === "Unassigned" ? "" : ownerName
+  ).slice(0, 80);
 
   const comments = normalizeComments(card?.comments);
-  let isApproved = card?.is_approved ? 1 : 0;
-  let isRejected = card?.is_rejected ? 1 : 0;
-  let rejectionReason = cleanText(card?.rejection_reason).slice(0, 500);
-  let rejectedAt = cleanText(card?.rejected_at) || null;
-
-  if (isApproved) {
-    isRejected = 0;
-    rejectionReason = "";
-    rejectedAt = null;
-  }
-
-  if (!isRejected || status !== "todo") {
-    isRejected = 0;
-    rejectionReason = "";
-    rejectedAt = null;
-  } else if (!rejectedAt) {
-    rejectedAt = new Date().toISOString();
-  }
+  const isApproved = card?.is_approved ? 1 : 0;
+  const isRejected = card?.is_rejected ? 1 : 0;
+  const rejectionReason = cleanText(card?.rejection_reason).slice(0, 500);
+  const rejectedAt = card?.rejected_at ? cleanText(card?.rejected_at) : null;
 
   return {
     title,
@@ -111,6 +156,7 @@ export async function onRequestPost(context) {
       return authResult;
     }
 
+    const session = authResult;
     const body = await request.json();
 
     const channelId = cleanText(body.channel_id, "global");
@@ -241,10 +287,19 @@ export async function onRequestPost(context) {
       .bind(channelId)
       .all();
 
+    const boardState = await touchBoardState(
+      env,
+      channelId,
+      session.userId,
+      session.displayName,
+      "imported the board"
+    );
+
     return Response.json({
       success: true,
       imported_count: sanitizedCards.length,
       cards: (result.results || []).map(mapRow),
+      board_state: boardState,
     });
   } catch (error) {
     return Response.json(

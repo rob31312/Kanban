@@ -11,8 +11,70 @@ function normalizeComments(comments) {
   return comments
     .map((item) => String(item).trim())
     .filter(Boolean)
-    .slice(0, 200)
-    .map((item) => item.slice(0, 1000));
+    .slice(0, 200);
+}
+
+function normalizeNullableText(value, fallback = "") {
+  const text = cleanText(value, fallback);
+  return text || null;
+}
+
+function mapBoardStateRow(row, boardId = "global") {
+  return {
+    board_id: row?.board_id || boardId,
+    version: Number(row?.version || 0),
+    updated_at: row?.updated_at || "",
+    updated_by_user_id: row?.updated_by_user_id || "",
+    updated_by_name: row?.updated_by_name || "",
+    last_action: row?.last_action || "",
+  };
+}
+
+async function touchBoardState(env, boardId, userId, userName, lastAction = "updated the board") {
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO board_state (
+      board_id,
+      version,
+      updated_at,
+      updated_by_user_id,
+      updated_by_name,
+      last_action
+    )
+    VALUES (?, 1, ?, ?, ?, ?)
+    ON CONFLICT(board_id) DO UPDATE SET
+      version = board_state.version + 1,
+      updated_at = excluded.updated_at,
+      updated_by_user_id = excluded.updated_by_user_id,
+      updated_by_name = excluded.updated_by_name,
+      last_action = excluded.last_action
+  `)
+    .bind(
+      boardId,
+      now,
+      userId || null,
+      userName || "",
+      lastAction || "updated the board"
+    )
+    .run();
+
+  const row = await env.DB.prepare(`
+    SELECT
+      board_id,
+      version,
+      updated_at,
+      updated_by_user_id,
+      updated_by_name,
+      last_action
+    FROM board_state
+    WHERE board_id = ?
+    LIMIT 1
+  `)
+    .bind(boardId)
+    .first();
+
+  return mapBoardStateRow(row, boardId);
 }
 
 function validatePayload({
@@ -25,8 +87,6 @@ function validatePayload({
   ownerName,
   createdByName,
   rejectionReason,
-  isApproved,
-  isRejected,
 }) {
   const allowedStatuses = ["todo", "inprogress", "testing", "done"];
   const allowedPriorities = ["High", "Medium", "Low"];
@@ -35,8 +95,6 @@ function validatePayload({
   if (!channelId) return "channel_id is required.";
   if (!allowedStatuses.includes(status)) return "Invalid status.";
   if (!allowedPriorities.includes(priority)) return "Invalid priority.";
-  if (isApproved && status !== "done") return "Approved cards must be in the Approval column.";
-  if (isRejected && status !== "todo") return "Rejected cards must remain in Backlog.";
 
   if (title.length > 120) return "Title must be 120 characters or fewer.";
   if (description.length > 2000) return "Description must be 2000 characters or fewer.";
@@ -53,14 +111,6 @@ function validatePayload({
   return "";
 }
 
-function parseComments(value) {
-  try {
-    return JSON.parse(value || "[]");
-  } catch {
-    return [];
-  }
-}
-
 function mapRow(row) {
   const ownerName = row.owner_name || row.owner || "Unassigned";
 
@@ -75,7 +125,13 @@ function mapRow(row) {
     created_by_name: row.created_by_name || "",
     created_by_user_id: row.created_by_user_id || "",
     priority: row.priority || "Medium",
-    comments: parseComments(row.comments),
+    comments: (() => {
+      try {
+        return JSON.parse(row.comments || "[]");
+      } catch {
+        return [];
+      }
+    })(),
     is_approved: Boolean(row.is_approved),
     is_rejected: Boolean(row.is_rejected),
     rejection_reason: row.rejection_reason || "",
@@ -153,27 +209,13 @@ export async function onRequestPost(context) {
     const status = cleanText(body.status, "todo");
     const priority = cleanText(body.priority, "Medium");
     const comments = normalizeComments(body.comments);
+    const isApproved = body.is_approved ? 1 : 0;
+    const isRejected = body.is_rejected ? 1 : 0;
+    const rejectionReason = cleanText(body.rejection_reason).slice(0, 500);
+    const rejectedAt = body.rejected_at ? cleanText(body.rejected_at) : null;
     const channelId = cleanText(body.channel_id, "global");
 
-    let isApproved = body.is_approved ? 1 : 0;
-    let isRejected = body.is_rejected ? 1 : 0;
-    let rejectionReason = cleanText(body.rejection_reason).slice(0, 500);
-    let rejectedAt = cleanText(body.rejected_at) || null;
-
-    if (isApproved) {
-      isRejected = 0;
-      rejectionReason = "";
-      rejectedAt = null;
-    }
-
-    if (!isRejected) {
-      rejectionReason = "";
-      rejectedAt = null;
-    } else if (!rejectedAt) {
-      rejectedAt = new Date().toISOString();
-    }
-
-    const ownerUserId = cleanText(body.owner_user_id) || null;
+    const ownerUserId = normalizeNullableText(body.owner_user_id);
     const ownerName = cleanText(body.owner_name || body.owner, "Unassigned");
 
     const createdByUserId = session.userId;
@@ -189,8 +231,6 @@ export async function onRequestPost(context) {
       ownerName,
       createdByName,
       rejectionReason,
-      isApproved,
-      isRejected,
     });
 
     if (validationError) {
@@ -330,9 +370,18 @@ export async function onRequestPost(context) {
       .bind(insertedId, channelId)
       .first();
 
+    const boardState = await touchBoardState(
+      env,
+      channelId,
+      createdByUserId,
+      createdByName,
+      "created a card"
+    );
+
     return Response.json({
       success: true,
       card: mapRow(row),
+      board_state: boardState,
     });
   } catch (error) {
     return Response.json(

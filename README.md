@@ -454,7 +454,7 @@ The current build uses an in app confirmation modal after selecting a file. Conf
 - this version depends on the `board_state` table and the `board-state` API route being deployed together
 
 ## Maintainer Notes
-If future you forget the setup order, do this:
+If future me forgets the setup order, do this:
 1. make changes locally
 2. test locally with Wrangler Pages dev
 3. commit and push to the development branch

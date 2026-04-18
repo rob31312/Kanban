@@ -9,7 +9,7 @@ const STATUS_LABELS = {
 };
 
 const STATUS_ORDER = ['todo', 'inprogress', 'testing', 'done'];
-const APP_VERSION = 'Kanban v2.0.0-beta.3';
+const APP_VERSION = 'Kanban v2.0.0';
 
 const PRIORITY_SORT_ORDER = {
   High: 0,

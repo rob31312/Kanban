@@ -7,13 +7,17 @@
 
 * { box-sizing: border-box; }
 
+html, body, #root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background:
     radial-gradient(circle at top left, rgba(59, 130, 246, 0.25), transparent 28%),
     radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.18), transparent 32%),
     #0f172a;
-  min-height: 100vh;
+  overflow: hidden;
 }
 
 button, input, textarea, select { font: inherit; }
@@ -22,7 +26,8 @@ button { cursor: pointer; }
 .app-shell {
   display: grid;
   grid-template-columns: 320px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -30,6 +35,7 @@ button { cursor: pointer; }
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.82);
   backdrop-filter: blur(10px);
+  overflow: auto;
 }
 
 .brand {
@@ -86,6 +92,10 @@ button { cursor: pointer; }
 
 .main-content {
   padding: 20px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -94,6 +104,7 @@ button { cursor: pointer; }
   align-items: center;
   gap: 18px;
   margin-bottom: 22px;
+  flex-shrink: 0;
 }
 
 .primary-btn, .secondary-btn, .task-actions button, .comment-entry button, .delete-btn {
@@ -113,6 +124,10 @@ button { cursor: pointer; }
   line-height: 1;
 }
 
+.confirm-modal {
+  max-width: 460px;
+}
+
 .primary-btn {
   color: white;
   background: linear-gradient(135deg, #2563eb, #7c3aed);
@@ -128,10 +143,19 @@ button { cursor: pointer; }
   background: rgba(220, 38, 38, 0.9);
 }
 
+.board-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .board-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(260px, 1fr));
   gap: 18px;
+  min-width: 1120px;
+  align-items: start;
 }
 
 .column {
@@ -139,7 +163,7 @@ button { cursor: pointer; }
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 22px;
   padding: 16px;
-  min-height: 70vh;
+  min-height: calc(100vh - 170px);
 }
 
 .column-header {
@@ -289,6 +313,28 @@ button { cursor: pointer; }
 
 .comments-panel ul { padding-left: 20px; }
 
+.comments-filter {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #cfe0f6;
+}
+
+.comments-filter input {
+  width: auto;
+  margin: 0;
+}
+
+.comments-list-shell {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(0,0,0,0.12);
+}
+
 .comment-entry {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -346,6 +392,24 @@ button { cursor: pointer; }
 .summary-page {
   display: grid;
   gap: 22px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.summary-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.summary-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .group2-edge-banner {
@@ -372,18 +436,13 @@ button { cursor: pointer; }
 
 .empty-note { color: #9db1ce; }
 
-@media (max-width: 1200px) {
-  .board-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
-  .standup-layout { grid-template-columns: 1fr; }
-}
-
 @media (max-width: 860px) {
   .app-shell { grid-template-columns: 1fr; }
   .sidebar {
     border-right: none;
     border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    max-height: 40vh;
   }
-  .board-grid { grid-template-columns: 1fr; }
   .two-col, .topbar {
     grid-template-columns: 1fr;
     display: grid;

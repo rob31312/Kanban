@@ -2,3 +2,10 @@ node_modules/
 dist/
 .env
 .DS_Store
+.wrangler/
+client/.wrangler/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+backfill_owner_name.sql
+.dev.vars

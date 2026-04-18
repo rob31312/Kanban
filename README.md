@@ -1,6 +1,6 @@
 
 # Kanban Discord Activity
-### v2.0.0-beta.3
+### v2.0.0
 
 ## Overview
 This project is a Discord Activity Kanban board built with a Vite React frontend, Cloudflare Pages hosting, Cloudflare Pages Functions backend, and a Cloudflare D1 database.
